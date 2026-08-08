@@ -120,22 +120,27 @@ public class ApiClient {
 
     /**
      * Lấy lệnh đang chờ từ website cho server này (poll theo chu kỳ heartbeat).
-     * Trả {@code null} nếu không có lệnh nào (bình thường).
+     * {@code command} = null nếu không có lệnh nào (bình thường); khi lệnh là
+     * {@code importaudit}, {@code fileB64} chứa snapshot .tar.gz (base64) để plugin
+     * giải mã và khôi phục.
      */
-    public CompletableFuture<String> fetchPendingCommand(String serverId) {
+    public CompletableFuture<PendingCommandResponse> fetchPendingCommand(String serverId) {
         if (!isConfigured()) {
             return CompletableFuture.failedFuture(
                     new ApiException(0, "MC_API_KEY chưa được cấu hình trên plugin (api.key rỗng)"));
         }
+        // Lệnh importaudit kèm snapshot base64 (tối đa ~67MB JSON) → timeout rộng
+        // hơn hẳn các request telemetry nhỏ, tránh mạng chậm làm rớt lệnh.
+        Duration pendingTimeout = Duration.ofSeconds(Math.max(timeout.toSeconds(), 90));
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/api/export/pending?server="
                         + URLEncoder.encode(serverId, StandardCharsets.UTF_8)))
-                .timeout(timeout)
+                .timeout(pendingTimeout)
                 .header(apiKeyHeader, apiKey)
                 .GET()
                 .build();
         return http.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
-                .thenApply(response -> handle(response, PendingCommandResponse.class).getCommand());
+                .thenApply(response -> handle(response, PendingCommandResponse.class));
     }
 
     /** Xác nhận plugin đã xử lý xong lệnh chờ (X-API-Key). */

@@ -480,6 +480,48 @@ def main():
                              headers=admin_headers)
         check("export run disallowed command -> 422", code == 422, f"got {code} {resp}")
 
+        # ── 10. Web-triggered IMPORT: admin upload snapshot → pending importaudit
+        #       (kèm file_b64) → plugin kéo qua heartbeat rồi khôi phục. ──
+        import_snap = _gzip.compress(b"web-import-snapshot\n" * 60)
+        code, resp = multipart_upload("/api/export/import", {"server": "main"},
+                                      {"file": ("audit-snapshot-handover.tar.gz", "application/gzip", import_snap)},
+                                      admin_headers)
+        ok = code == 200 and resp.get("requested") == ["main"] \
+            and resp.get("command") == "importaudit"
+        check("import upload OK (admin JWT)", ok, f"got {code} {resp}")
+
+        code, resp = request("GET", "/api/export/pending?server=main", headers=up)
+        ok = code == 200 and resp.get("command") == "importaudit" \
+            and base64.b64decode(resp.get("file_b64")) == import_snap
+        check("pending importaudit + file_b64 decodes to original", ok, f"got {code}")
+
+        code, resp = multipart_upload("/api/export/import", {"server": "main"},
+                                      {"file": ("a.tar.gz", "application/gzip", import_snap)},
+                                      admin_headers)
+        check("import duplicate while pending -> 409", code == 409, f"got {code} {resp}")
+
+        code, resp = multipart_upload("/api/export/import", {"server": "main"},
+                                      {"file": ("x.tar.gz", "application/gzip", b"not gzip")},
+                                      admin_headers)
+        check("import non-gzip -> 422", code == 422, f"got {code}")
+
+        code, resp = multipart_upload("/api/export/import", {"server": "main"},
+                                      {"file": ("a.tar.gz", "application/gzip", import_snap)},
+                                      {"Authorization": f"Bearer {u_login['access_token']}"})
+        check("import non-admin -> 403", code == 403, f"got {code} {resp}")
+
+        code, resp = request("POST", "/api/export/pending/ack", {"server": "main"}, headers=up)
+        check("import ack OK", code == 200 and resp.get("ok") is True, f"got {code} {resp}")
+
+        code, resp = request("GET", "/api/export/pending?server=main", headers=up)
+        check("import pending cleared after ack",
+              code == 200 and resp.get("command") is None, f"got {code} {resp}")
+
+        code, resp = multipart_upload("/api/export/import", {"server": "main"},
+                                      {"file": ("audit-snapshot-retry.tar.gz", "application/gzip", import_snap)},
+                                      admin_headers)
+        check("import works again after ack", code == 200, f"got {code} {resp}")
+
         print(f"\n===== E2E RESULT: {PASS} passed, {FAIL} failed =====")
         return 0 if FAIL == 0 else 1
     finally:

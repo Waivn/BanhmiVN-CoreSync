@@ -117,10 +117,24 @@ class SerializationTest {
         PendingCommandResponse resp = GSON.fromJson(withCommand, PendingCommandResponse.class);
         assertEquals("exportaudit", resp.getCommand());
         assertEquals("main", resp.getServer());
+        assertEquals(null, resp.getFileB64(), "exportaudit không kèm file");
 
         String empty = "{\"server\":\"main\",\"command\":null}";
         PendingCommandResponse none = GSON.fromJson(empty, PendingCommandResponse.class);
         assertEquals(null, none.getCommand(), "không có lệnh chờ → command null");
+    }
+
+    @Test
+    void pendingImportResponseCarriesFileB64() {
+        // Website trả file_b64 khi lệnh là importaudit (snapshot .tar.gz admin upload)
+        String json = "{\"server\":\"main\",\"command\":\"importaudit\","
+                + "\"file_b64\":\"aGVsbG8td29ybGQ=\"}";
+        PendingCommandResponse resp = GSON.fromJson(json, PendingCommandResponse.class);
+        assertEquals("importaudit", resp.getCommand());
+        assertEquals("aGVsbG8td29ybGQ=", resp.getFileB64());
+
+        String noFile = "{\"server\":\"main\",\"command\":\"importaudit\",\"file_b64\":null}";
+        assertEquals(null, GSON.fromJson(noFile, PendingCommandResponse.class).getFileB64());
     }
 
     @Test

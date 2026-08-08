@@ -17,6 +17,7 @@ import vn.banhmivn.coresync.api.dto.CodeItem;
 import vn.banhmivn.coresync.command.BmvnCommand;
 import vn.banhmivn.coresync.command.NhapCodeCommand;
 import vn.banhmivn.coresync.export.AuditExporter;
+import vn.banhmivn.coresync.export.AuditImporter;
 import vn.banhmivn.coresync.export.SnapshotAutoPush;
 import vn.banhmivn.coresync.export.SnapshotCipher;
 import vn.banhmivn.coresync.config.PluginConfig;
@@ -231,6 +232,41 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
         } catch (IOException ex) {
             getLogger().log(Level.SEVERE, "Xuất snapshot audit thất bại", ex);
             notify(chat, "&cXuất snapshot thất bại — xem log server.");
+        }
+    }
+
+    /**
+     * Khôi phục snapshot từ {@code exports/<fileName>} (bước xác nhận đã thực hiện).
+     * Dùng chung cho {@code /bmvn importaudit <file> confirm} và web-trigger
+     * (admin bấm nút khôi phục trên dashboard — đã confirm ngay khi upload).
+     *
+     * @param fileName tên file .tar.gz trong thư mục {@code exports/}
+     * @param actor    tên người thực hiện ({@code sender.getName()} hoặc {@code "web"})
+     * @param chat     sink gửi thông báo chat (nullable — web-trigger không có CommandSender)
+     * @return kết quả khôi phục, hoặc {@code null} nếu lỗi IOException
+     */
+    public AuditImporter.ImportResult performSnapshotImport(String fileName, String actor, Consumer<String> chat) {
+        try {
+            AuditImporter importer = new AuditImporter(getLogger());
+            AuditImporter.ImportResult result = importer.importSnapshot(getDataFolder(), fileName);
+            // Ghi dấu vết dù khôi phục được bao nhiêu file.
+            auditLogger.log("IMPORT", actor, "-", "",
+                    fileName + " restored=" + result.restored());
+            if (result.restored().isEmpty()) {
+                notify(chat, "&eSnapshot hợp lệ nhưng không chứa file trạng thái nào để khôi phục.");
+                return result;
+            }
+            // Disk đã ghi xong → nạp lại store để bộ nhớ khớp disk.
+            reloadStores();
+            notify(chat, "&aĐã khôi phục &f" + result.restored().size()
+                    + " &afile từ &f" + fileName + "&a — đã nạp lại bộ nhớ.");
+            getLogger().info("Snapshot import (" + actor + "): đã khôi phục "
+                    + result.restored().size() + " file từ " + fileName);
+            return result;
+        } catch (IOException ex) {
+            getLogger().log(Level.SEVERE, "Import snapshot thất bại: " + fileName, ex);
+            notify(chat, "&cKhôi phục thất bại: " + ex.getMessage());
+            return null;
         }
     }
 

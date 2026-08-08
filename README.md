@@ -137,6 +137,14 @@ mới, chạy `/bmvn importaudit <file>` để **xem trước**, rồi `/bmvn im
 để thực hiện → các file trạng thái được ghi lại và store trong bộ nhớ được nạp
 lại ngay (không cần restart). Bước xác nhận bắt buộc vì import sẽ **đè dữ liệu hiện tại**.
 
+- **⬆ Khôi phục từ website:** trang admin có nút **"⬆ Khôi phục snapshot (import)"**
+  — staff tải snapshot về máy rồi upload lại với server đích; website lưu file
+  (base64) vào lệnh chờ `importaudit`, plugin kéo về qua heartbeat, ghi vào
+  `exports/web-import-<ts>.tar.gz` và khôi phục **ngay** (bước xác nhận đã là
+  hành động bấm nút của admin — không cần console). Giải mã/ghi file chạy trên
+  thread async (không lag main thread), timeout request được nới rộng cho
+  snapshot lớn. Khép kín vòng bàn giao: export → tải về → upload → import.
+
 An toàn theo thiết kế:
 - Chỉ nhận **tên file phẳng** (không chứa `/`, `\`, `..`) — chống path traversal.
 - Chỉ khôi phục đúng **6 file trạng thái đã biết** (whitelist); entry lạ → từ chối
@@ -205,7 +213,7 @@ vn.banhmivn.coresync
 ## Build & test
 
 ```bash
-mvn package          # build jar + chạy 67 unit tests (payload, codegen, rank, alerts, export/import, multipart, crypto, auto-push, pending-command)
+mvn package          # build jar + chạy 68 unit tests (payload, codegen, rank, alerts, export/import, multipart, crypto, auto-push, pending-command)
 ```
 
 - Gson + Jakarta Mail được **shade + relocate** (`vn.banhmivn.libs.*`) — plugin tự
@@ -224,6 +232,7 @@ mvn package          # build jar + chạy 67 unit tests (payload, codegen, rank,
 | `POST /api/export/run` | `{command?="exportaudit", server?}` | admin JWT — yêu cầu server chạy exportaudit (chỉ 1 lệnh chờ/server; 409 nếu còn lệnh) |
 | `GET /api/export/pending?server=` | — | X-API-Key — lệnh đang chờ của server (poll theo heartbeat, không tiêu thụ) |
 | `POST /api/export/pending/ack` | `{server}` | X-API-Key — xác nhận đã xử lý xong lệnh chờ (idempotent) |
+| `POST /api/export/import` | multipart: `server` + file `file` (.tar.gz) | admin JWT — upload snapshot để KHÔI PHỤC trên server (bản rõ gzip; 409 nếu còn lệnh chờ) |
 
 Auth: header `X-API-Key` (= `MC_API_KEY` trên website) cho upload; JWT admin cho download.
 Trạng thái web: `online | offline | maintenance | update`.

@@ -5,10 +5,15 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
 import vn.banhmivn.coresync.ServerState;
 import vn.banhmivn.coresync.api.ApiClient;
+import vn.banhmivn.coresync.api.dto.PendingCommandResponse;
 import vn.banhmivn.coresync.api.dto.ServerStatusPayload;
 import vn.banhmivn.coresync.config.PluginConfig;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 
@@ -88,28 +93,51 @@ public class HeartbeatService {
 
     /** Whitelist lệnh website được phép yêu cầu (không bao giờ chạy lệnh tuỳ ý). */
     static boolean isSupportedCommand(String command) {
-        return "exportaudit".equals(command);
+        return "exportaudit".equals(command) || "importaudit".equals(command);
     }
 
-    /** Poll lệnh chờ từ web; có lệnh exportaudit → chạy trên MAIN thread rồi ack. */
+    /** Poll lệnh chờ từ web; có lệnh hợp lệ → chạy trên MAIN thread rồi ack. */
     private void checkPendingWebCommand() {
-        api.fetchPendingCommand(config.serverId()).whenComplete((command, err) -> {
+        api.fetchPendingCommand(config.serverId()).whenComplete((pending, err) -> {
             if (err != null) {
                 plugin.getLogger().log(Level.FINE, "Poll lệnh chờ từ web thất bại: " + err.getMessage());
                 return;
             }
+            String command = pending == null ? null : pending.getCommand();
             if (!isSupportedCommand(command)) {
                 return; // null hoặc lệnh không được hỗ trợ — bỏ qua an toàn
             }
-            // Export đọc audit.log (AuditLogger cũng main thread) → phải chạy main.
+            // "importaudit": giải mã base64 + ghi file là thuần I/O — làm ngay trên
+            // thread async này (không đụng Bukkit state) để tránh lag main thread với
+            // snapshot lớn (tối đa 50MB). Chỉ import (đụng store) mới chạy main.
+            String importFileName = null;
+            if ("importaudit".equals(command)) {
+                try {
+                    importFileName = writeWebImportFile(pending);
+                } catch (RuntimeException ex) {
+                    plugin.getLogger().log(Level.WARNING,
+                            "Web lệnh 'importaudit' thất bại (chuẩn bị file): " + ex.getMessage());
+                    // fileName giữ null → import được bỏ qua, lệnh vẫn được ack dưới đây.
+                }
+            }
+            final String fileName = importFileName;
+            // Export/import đọc audit.log + store (AuditLogger cũng main thread) → phải chạy main.
             Bukkit.getScheduler().runTask(plugin, () -> {
                 try {
-                    ((vn.banhmivn.coresync.BanhmiVNCoreSync) plugin)
-                            .performSnapshotExport("WEB_EXPORT", "web", null);
+                    if ("importaudit".equals(command)) {
+                        if (fileName != null) {
+                            ((vn.banhmivn.coresync.BanhmiVNCoreSync) plugin)
+                                    .performSnapshotImport(fileName, "web", null);
+                        }
+                    } else {
+                        ((vn.banhmivn.coresync.BanhmiVNCoreSync) plugin)
+                                .performSnapshotExport("WEB_EXPORT", "web", null);
+                    }
                 } catch (RuntimeException ex) {
                     // Lỗi ngoài ý muốn — log để ops biết; lệnh vẫn được ack để
                     // tránh retry-loop mỗi chu kỳ heartbeat (lỗi sẽ lặp lại).
-                    plugin.getLogger().log(Level.WARNING, "Web export (WEB_EXPORT) thất bại: " + ex.getMessage(), ex);
+                    plugin.getLogger().log(Level.WARNING,
+                            "Web lệnh '" + command + "' thất bại: " + ex.getMessage(), ex);
                 } finally {
                     api.ackPendingCommand(config.serverId()).exceptionally(ex -> {
                         plugin.getLogger().log(Level.FINE, "Ack lệnh chờ thất bại: " + ex.getMessage());
@@ -118,6 +146,30 @@ public class HeartbeatService {
                 }
             });
         });
+    }
+
+    /**
+     * Giải mã base64 → ghi {@code exports/web-import-<ts>.tar.gz} (tên phẳng).
+     * Thuần I/O — gọi từ thread async, không đụng Bukkit state. Lỗi bọc
+     * RuntimeException để caller log + vẫn ack (không retry-loop).
+     */
+    private String writeWebImportFile(PendingCommandResponse pending) {
+        try {
+            if (pending.getFileB64() == null || pending.getFileB64().isBlank()) {
+                throw new IOException("Thiếu dữ liệu snapshot trong lệnh importaudit");
+            }
+            // decode chuẩn (padding đúng); IllegalArgumentException là RuntimeException → caller bắt.
+            byte[] bytes = Base64.getDecoder().decode(pending.getFileB64());
+            File exports = new File(plugin.getDataFolder(), "exports");
+            if (!exports.isDirectory() && !exports.mkdirs()) {
+                throw new IOException("Không tạo được thư mục exports/");
+            }
+            File snapshot = new File(exports, "web-import-" + System.currentTimeMillis() + ".tar.gz");
+            Files.write(snapshot.toPath(), bytes);
+            return snapshot.getName();
+        } catch (IOException ex) {
+            throw new RuntimeException("Không ghi được snapshot import: " + ex.getMessage(), ex);
+        }
     }
 
     /** Payload telemetry hiện tại (đọc trên main thread — gọi từ async task là an toàn cho các getter này). */

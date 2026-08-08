@@ -270,19 +270,13 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
                 return;
             }
 
-            AuditImporter.ImportResult result = importer.importSnapshot(plugin.getDataFolder(), args[1]);
-            // Ghi dấu vết dù khôi phục được bao nhiêu file.
-            plugin.auditLogger().log("IMPORT", sender.getName(), "-", "",
-                    args[1] + " restored=" + result.restored());
-            if (result.restored().isEmpty()) {
-                Chat.send(sender, config.prefix(),
-                        "&eSnapshot hợp lệ nhưng không chứa file trạng thái nào để khôi phục.");
+            // Logic dùng chung với web-trigger (admin bấm nút khôi phục trên dashboard)
+            // — sống ở plugin class. Lỗi/rỗng đã có thông báo bên trong.
+            AuditImporter.ImportResult result = plugin.performSnapshotImport(args[1],
+                    sender.getName(), s -> Chat.send(sender, config.prefix(), s));
+            if (result == null || result.restored().isEmpty()) {
                 return;
             }
-            // Disk đã ghi xong → nạp lại store để bộ nhớ khớp disk.
-            plugin.reloadStores();
-            Chat.send(sender, config.prefix(), "&aĐã khôi phục &f" + result.restored().size()
-                    + " &afile từ &f" + args[1] + "&a — đã nạp lại bộ nhớ.");
             sender.sendMessage(Chat.color(config.prefix()
                     + "&7Đã khôi phục: &f" + String.join(", ", result.restored())));
         } catch (java.io.IOException ex) {
