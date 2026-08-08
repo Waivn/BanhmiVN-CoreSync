@@ -8,6 +8,8 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
+import vn.banhmivn.coresync.alert.AlertNotifier;
+import vn.banhmivn.coresync.alert.SuspicionDetector;
 import vn.banhmivn.coresync.api.ApiClient;
 import vn.banhmivn.coresync.audit.AuditLogger;
 import vn.banhmivn.coresync.history.RedeemHistory;
@@ -44,6 +46,8 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
     private RewardApplier rewardApplier;
     private GiftCodeManager giftCodeManager;
     private HeartbeatService heartbeat;
+    private SuspicionDetector alerts;
+    private AlertNotifier alertNotifier;
 
     @Override
     public void onEnable() {
@@ -69,8 +73,9 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
         this.auditLogger = new AuditLogger(this);
         this.redeemHistory = new RedeemHistory(this);
         this.rewardApplier = new RewardApplier(this, config, itemBinding);
+        setupAlerts();
         this.giftCodeManager = new GiftCodeManager(this, config, api, generator, usedCache,
-                rewardApplier, pendingRewards, auditLogger, redeemHistory);
+                rewardApplier, pendingRewards, auditLogger, redeemHistory, alerts);
         this.heartbeat = new HeartbeatService(this, config, api);
 
         registerCommands();
@@ -90,6 +95,9 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
         if (heartbeat != null) {
             heartbeat.pushFinalOffline();
             heartbeat.stop();
+        }
+        if (alertNotifier != null) {
+            alertNotifier.shutdown();
         }
         getLogger().info("BanhmiVN-CoreSync disabled.");
     }
@@ -129,11 +137,34 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
         }
         api = new ApiClient(config.apiBaseUrl(), config.apiKey(), config.apiKeyHeader(),
                 config.apiTimeoutSeconds());
+        if (alertNotifier != null) {
+            alertNotifier.shutdown();
+            alertNotifier = null;
+        }
+        setupAlerts();
         heartbeat = new HeartbeatService(this, config, api);
         giftCodeManager = new GiftCodeManager(this, config, api, generator, usedCache,
-                rewardApplier, pendingRewards, auditLogger, redeemHistory);
+                rewardApplier, pendingRewards, auditLogger, redeemHistory, alerts);
         heartbeat.start();
         getLogger().info("Config reloaded.");
+    }
+
+    /**
+     * Khởi tạo bộ phát hiện đáng ngờ + kênh cảnh báo theo config.
+     * Tắt hoàn toàn nếu alerts.enabled=false hoặc không có kênh nào cấu hình.
+     */
+    private void setupAlerts() {
+        if (config.alertsEnabled()) {
+            alertNotifier = new AlertNotifier(this, config.serverName(),
+                    config.discordWebhookUrl(), config.emailSettings());
+            alerts = new SuspicionDetector(config.alertRules(), alertNotifier);
+            getLogger().info("Staff alerts: " + config.alertRules().size() + " rule(s), discord="
+                    + alertNotifier.discordConfigured() + ", email=" + alertNotifier.emailConfigured());
+        } else {
+            alertNotifier = null;
+            alerts = new SuspicionDetector(java.util.List.of(), (title, message) -> { });
+            getLogger().info("Staff alerts disabled (alerts.enabled=false).");
+        }
     }
 
     // ── Trao lại reward còn nợ khi player vào server ────────
@@ -201,5 +232,9 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
 
     public HeartbeatService heartbeat() {
         return heartbeat;
+    }
+
+    public SuspicionDetector alerts() {
+        return alerts;
     }
 }

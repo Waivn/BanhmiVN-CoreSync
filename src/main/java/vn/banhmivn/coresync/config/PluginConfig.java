@@ -1,10 +1,15 @@
 package vn.banhmivn.coresync.config;
 
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import vn.banhmivn.coresync.ServerState;
+import vn.banhmivn.coresync.alert.AlertRule;
+import vn.banhmivn.coresync.alert.EmailSettings;
 import vn.banhmivn.coresync.rank.RankType;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /** Wrapper có kiểu cho config.yml (đọc lại khi /bmvn reload). */
@@ -27,6 +32,11 @@ public class PluginConfig {
     private boolean rankUseApi;
     private boolean pointsUseApi;
     private boolean giveItemOnRedeem;
+
+    private boolean alertsEnabled;
+    private String discordWebhookUrl;
+    private EmailSettings emailSettings;
+    private List<AlertRule> alertRules;
 
     private String prefix;
     private String msgInvalidCode;
@@ -58,11 +68,67 @@ public class PluginConfig {
         pointsUseApi = cfg.getBoolean("points.use-api", true);
         giveItemOnRedeem = cfg.getBoolean("items.give-on-redeem", true);
 
+        alertsEnabled = cfg.getBoolean("alerts.enabled", true);
+        discordWebhookUrl = cfg.getString("alerts.discord-webhook-url", "").trim();
+        emailSettings = parseEmailSettings();
+        alertRules = parseAlertRules();
+
         prefix = cfg.getString("messages.prefix", "&8[&bBanhmiVN&8] ");
         msgInvalidCode = cfg.getString("messages.invalid-code", "&cMã không hợp lệ hoặc không tồn tại.");
         msgAlreadyUsed = cfg.getString("messages.already-used", "&cMã này đã được sử dụng trước đó.");
         msgRedeemSuccess = cfg.getString("messages.redeem-success", "&a🎉 Nhập code thành công! Đã trao phần thưởng cho bạn.");
         msgNotOnline = cfg.getString("messages.not-online", "&cVui lòng đăng nhập lại để nhận phần thưởng.");
+    }
+
+    private EmailSettings parseEmailSettings() {
+        ConfigurationSection sec = cfg.getConfigurationSection("alerts.email");
+        if (sec == null) {
+            return EmailSettings.disabled();
+        }
+        List<String> to = sec.getStringList("to");
+        boolean enabled = sec.getBoolean("enabled", false)
+                && !sec.getString("smtp-host", "").isBlank()
+                && !sec.getString("from", "").isBlank()
+                && !to.isEmpty();
+        if (enabled && sec.getString("smtp-username", "").isBlank()) {
+            plugin.getLogger().warning("alerts.email bật nhưng thiếu smtp-username — email cảnh báo sẽ thất bại.");
+        }
+        return new EmailSettings(
+                enabled,
+                sec.getString("smtp-host", ""),
+                Math.max(1, sec.getInt("smtp-port", 587)),
+                sec.getString("smtp-username", ""),
+                sec.getString("smtp-password", ""),
+                sec.getBoolean("smtp-ssl", false),
+                sec.getString("from", ""),
+                List.copyOf(to));
+    }
+
+    /** Đọc danh sách quy tắc cảnh báo; bỏ qua rule thiếu/invalid (kèm log). */
+    private List<AlertRule> parseAlertRules() {
+        List<AlertRule> rules = new ArrayList<>();
+        ConfigurationSection sec = cfg.getConfigurationSection("alerts.rules");
+        if (sec == null) {
+            return rules;
+        }
+        for (String key : sec.getKeys(false)) {
+            ConfigurationSection rule = sec.getConfigurationSection(key);
+            if (rule == null) {
+                continue;
+            }
+            try {
+                rules.add(new AlertRule(
+                        key,
+                        rule.getString("event", ""),
+                        rule.getLong("window-seconds", 60),
+                        rule.getInt("threshold", 5),
+                        rule.getLong("cooldown-seconds", 300),
+                        rule.getBoolean("enabled", true)));
+            } catch (IllegalArgumentException ex) {
+                plugin.getLogger().warning("Bỏ qua rule cảnh báo không hợp lệ '" + key + "': " + ex.getMessage());
+            }
+        }
+        return List.copyOf(rules);
     }
 
     /** Nhóm LuckPerms theo rank (giá trị từ config, đã hợp lệ). */
@@ -120,6 +186,22 @@ public class PluginConfig {
 
     public int heartbeatIntervalSeconds() {
         return heartbeatIntervalSeconds;
+    }
+
+    public boolean alertsEnabled() {
+        return alertsEnabled;
+    }
+
+    public String discordWebhookUrl() {
+        return discordWebhookUrl;
+    }
+
+    public EmailSettings emailSettings() {
+        return emailSettings;
+    }
+
+    public List<AlertRule> alertRules() {
+        return alertRules;
     }
 
     public boolean rankUseApi() {

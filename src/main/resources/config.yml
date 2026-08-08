@@ -52,6 +52,38 @@ items:
   # Có tự động trao item đã bind khi redeem code loại crate/item không.
   give-on-redeem: true
 
+alerts:
+  # Cảnh báo staff khi phát hiện hành vi đáng ngờ trong audit stream
+  # (vd brute-force nhập code). Bật quy tắc + ít nhất một kênh gửi.
+  enabled: true
+  # Discord webhook URL — để trống = tắt kênh Discord.
+  # Tạo webhook: Server Settings → Integrations → Webhooks → New Webhook.
+  discord-webhook-url: ""
+  email:
+    # Gửi email SMTP cho staff (tuỳ chọn). Bật khi có SMTP credentials.
+    enabled: false
+    smtp-host: ""
+    smtp-port: 587
+    smtp-username: ""
+    smtp-password: ""
+    # true → SSL trực tiếp (thường cổng 465); false → STARTTLS (thường 587).
+    smtp-ssl: false
+    from: ""
+    to:
+      - "admin@banhmivn.fun"
+  rules:
+    # Brute-force guard: player thử NHIỀU code sai trong thời gian ngắn.
+    redeem-invalid:
+      enabled: true
+      # Event audit cần theo dõi (khớp với AuditLogger: REDEEM_INVALID, ...).
+      event: "REDEEM_INVALID"
+      # Cửa sổ thời gian đếm (giây).
+      window-seconds: 60
+      # Số lần >= ngưỡng này trong cửa sổ → cảnh báo staff.
+      threshold: 5
+      # Tối thiểu giữa 2 cảnh báo cùng quy tắc + player (giây) — chống spam.
+      cooldown-seconds: 300
+
 messages:
   prefix: "&8[&bBanhmiVN&8] "
   invalid-code: "&cMã không hợp lệ hoặc không tồn tại."

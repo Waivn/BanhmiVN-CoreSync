@@ -22,6 +22,7 @@ Minecraft Server ──► BanhmiVN.fun Backend (FastAPI)
 | 📦 Bind item | `/bmvn binditem <key>` lưu **toàn bộ ItemMeta** (NBT, enchant, lore, display name) vào `items.yml`; trao khi redeem (rớt dưới chân nếu inventory đầy). |
 | 📡 Heartbeat 15s | Telemetry `state, player_count, max_players, tps, memory` lên `/api/server/status` — website render trạng thái realtime. |
 | 📜 Audit trail | Mọi sự kiện sinh/đổi giftcode ghi vào `audit.log` (append-only) + `redeem-history.yml` truy vấn theo player qua `/bmvn history`. |
+| 🚨 Staff alerts | Phát hiện hành vi đáng ngờ (vd brute-force nhập code: ≥5 `REDEEM_INVALID` trong 60s) → báo **Discord webhook** và/hoặc **email SMTP** cho staff. Ngưỡng/cửa sổ/cooldown cấu hình được. |
 | 🔁 Pending rewards | Reward chưa trao được (offline / item chưa bind) lưu `pending-rewards.yml`, tự trao lại khi player vào server. |
 | 🛡️ An toàn | Toàn bộ HTTP **async** (Java `HttpClient`) — zero lag main thread. Cache `used-codes.yml` chống dùng lại. Group/giá trị đều được validate chống command injection. |
 
@@ -88,6 +89,45 @@ Ví dụ sinh code:
 - **`redeem-history.yml`** — bản truy vấn nhanh theo player (tối đa 100 mã/player).
   Xem qua `/bmvn history <player>`.
 
+## Cảnh báo an ninh (Staff alerts)
+
+Plugin theo dõi stream audit và tự động báo staff khi thấy hành vi đáng ngờ
+(sliding window, theo từng player). Mặc định bật quy tắc **brute-force guard**:
+player thử ≥ **5** code sai (`REDEEM_INVALID`) trong **60 giây** → cảnh báo,
+tối đa 1 cảnh báo / 300 giây / player (chống spam staff).
+
+Cấu hình trong `config.yml`:
+
+```yaml
+alerts:
+  enabled: true
+  # Kênh Discord — tạo webhook rồi dán URL vào đây (để trống = tắt Discord)
+  discord-webhook-url: "https://discord.com/api/webhooks/..."
+  email:
+    enabled: true          # bật khi có SMTP credentials
+    smtp-host: "smtp.gmail.com"
+    smtp-port: 587
+    smtp-username: "alerts@banhmivn.fun"
+    smtp-password: "..."   # app-password
+    smtp-ssl: false         # true → cổng 465/SSL; false → STARTTLS (587)
+    from: "alerts@banhmivn.fun"
+    to: ["owner@banhmivn.fun"]
+  rules:
+    redeem-invalid:
+      enabled: true
+      event: "REDEEM_INVALID"   # event audit cần theo dõi
+      window-seconds: 60
+      threshold: 5
+      cooldown-seconds: 300
+```
+
+- Có thể thêm quy tắc khác (vd `event: "REDEEM_USED"` — spam nhập mã đã dùng).
+- Cảnh báo gửi qua **Discord webhook** (bất đồng bộ) và/hoặc **email SMTP**; nếu
+  không cấu hình kênh nào, chỉ ghi vào console/`latest.log`.
+- Jakarta Mail được **shade + relocate** (`vn.banhmivn.libs.mail.*`) — không xung
+  đột classloader với plugin khác; mọi lỗi gửi chỉ ghi warning, không bao giờ
+  làm gián đoạn game.
+
 ## Kiến trúc
 
 ```
@@ -101,17 +141,19 @@ vn.banhmivn.coresync
 ├── reward/                 # RewardApplier (LP/PP/GP/item) + PendingRewards
 ├── item/ItemBindingManager # items.yml (base64 ItemStack đầy đủ NBT/meta)
 ├── heartbeat/              # HeartbeatService 15s
+├── alert/                  # SuspicionDetector (sliding window) + AlertNotifier (Discord/SMTP)
 └── command/                # NhapCodeCommand + BmvnCommand (tab-complete)
 ```
 
 ## Build & test
 
 ```bash
-mvn package          # build jar + chạy 16 unit tests (payload, codegen, rank)
+mvn package          # build jar + chạy 27 unit tests (payload, codegen, rank, alerts)
 ```
 
-- Gson được **shade + relocate** (`vn.banhmivn.libs.gson`) — plugin tự chứa, không đụng bản Gson của server.
-- Luồng E2E (sync → redeem → status) chạy được với backend thật qua `scripts/e2e-test.py`.
+- Gson + Jakarta Mail được **shade + relocate** (`vn.banhmivn.libs.*`) — plugin tự
+  chứa, không đụng bản của server.
+- Luồng E2E (sync → redeem → status → audit) chạy được với backend thật qua `scripts/e2e-test.py`.
 
 ## API contract (website)
 

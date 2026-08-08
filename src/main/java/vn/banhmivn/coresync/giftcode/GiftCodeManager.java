@@ -3,6 +3,7 @@ package vn.banhmivn.coresync.giftcode;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
+import vn.banhmivn.coresync.alert.SuspicionDetector;
 import vn.banhmivn.coresync.audit.AuditLogger;
 import vn.banhmivn.coresync.api.ApiClient;
 import vn.banhmivn.coresync.api.ApiException;
@@ -41,6 +42,8 @@ public class GiftCodeManager {
     private final PendingRewards pendingRewards;
     private final AuditLogger audit;
     private final RedeemHistory redeemHistory;
+    /** Phát hiện brute-force / hành vi đáng ngờ từ stream event redeem. */
+    private final SuspicionDetector alerts;
 
     /** Cooldown nhẹ chống spam /nhapcode (3s/player) — mọi truy cập trên main thread. */
     private static final long REDEEM_COOLDOWN_MS = 3000;
@@ -49,7 +52,8 @@ public class GiftCodeManager {
     public GiftCodeManager(Plugin plugin, PluginConfig config, ApiClient api,
                            GiftCodeGenerator generator, UsedCodeCache usedCache,
                            RewardApplier rewardApplier, PendingRewards pendingRewards,
-                           AuditLogger audit, RedeemHistory redeemHistory) {
+                           AuditLogger audit, RedeemHistory redeemHistory,
+                           SuspicionDetector alerts) {
         this.plugin = plugin;
         this.config = config;
         this.api = api;
@@ -59,6 +63,7 @@ public class GiftCodeManager {
         this.pendingRewards = pendingRewards;
         this.audit = audit;
         this.redeemHistory = redeemHistory;
+        this.alerts = alerts;
     }
 
     // ── Redeem ──────────────────────────────────────────────
@@ -78,11 +83,13 @@ public class GiftCodeManager {
 
         if (!GiftCodeGenerator.isValidFormat(code)) {
             audit.logRedeemInvalid(player.getName(), code, "bad-format");
+            alerts.observe("REDEEM_INVALID", player.getName(), "bad-format");
             Chat.send(player, config.prefix(), config.msgInvalidCode());
             return;
         }
         if (usedCache.isUsed(code)) {
             audit.logRedeemAlreadyUsed(player.getName(), code);
+            alerts.observe("REDEEM_USED", player.getName(), "already-used-local");
             Chat.send(player, config.prefix(), config.msgAlreadyUsed());
             return;
         }
@@ -150,12 +157,14 @@ public class GiftCodeManager {
             if (apiErr.isAlreadyUsed()) {
                 // Website xác nhận mã đã dùng (hoặc đơn bị từ chối) → cache lại.
                 audit.logRedeemAlreadyUsed(player.getName(), code);
+                alerts.observe("REDEEM_USED", player.getName(), "already-used-web");
                 usedCache.markUsed(code, player.getName());
                 Chat.send(player, config.prefix(), config.msgAlreadyUsed());
                 return;
             }
             if (apiErr.isNotFound()) {
                 audit.logRedeemInvalid(player.getName(), code, "not-found");
+                alerts.observe("REDEEM_INVALID", player.getName(), "not-found");
                 Chat.send(player, config.prefix(), config.msgInvalidCode());
                 return;
             }
