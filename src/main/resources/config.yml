@@ -52,6 +52,11 @@ items:
   # Có tự động trao item đã bind khi redeem code loại crate/item không.
   give-on-redeem: true
 
+exports:
+  # Tự động xoá snapshot cũ trong exports/ sau mỗi lần /bmvn exportaudit
+  # và khi plugin enable. 0 (hoặc âm) = tắt dọn dẹp.
+  retention-days: 30
+
 alerts:
   # Cảnh báo staff khi phát hiện hành vi đáng ngờ trong audit stream
   # (vd brute-force nhập code). Bật quy tắc + ít nhất một kênh gửi.

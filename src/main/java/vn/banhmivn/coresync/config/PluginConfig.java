@@ -33,6 +33,8 @@ public class PluginConfig {
     private boolean pointsUseApi;
     private boolean giveItemOnRedeem;
 
+    private int exportsRetentionDays;
+
     private boolean alertsEnabled;
     private String discordWebhookUrl;
     private EmailSettings emailSettings;
@@ -67,6 +69,8 @@ public class PluginConfig {
         rankUseApi = cfg.getBoolean("ranks.use-api", true);
         pointsUseApi = cfg.getBoolean("points.use-api", true);
         giveItemOnRedeem = cfg.getBoolean("items.give-on-redeem", true);
+
+        exportsRetentionDays = Math.max(0, cfg.getInt("exports.retention-days", 30));
 
         alertsEnabled = cfg.getBoolean("alerts.enabled", true);
         discordWebhookUrl = cfg.getString("alerts.discord-webhook-url", "").trim();
@@ -186,6 +190,11 @@ public class PluginConfig {
 
     public int heartbeatIntervalSeconds() {
         return heartbeatIntervalSeconds;
+    }
+
+    /** Số ngày giữ snapshot trong exports/ (0 = không dọn dẹp). */
+    public int exportsRetentionDays() {
+        return exportsRetentionDays;
     }
 
     public boolean alertsEnabled() {

@@ -252,13 +252,15 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
                     new File(dataFolder, "items.yml"));
             AuditExporter.SnapshotResult result = exporter.export(
                     dataFolder, sources, config.serverName(),
-                    plugin.getDescription().getVersion());
+                    plugin.getDescription().getVersion(), config.exportsRetentionDays());
             String kb = String.format(Locale.ROOT, "%.1f", result.bytes() / 1024.0);
             // Ghi dấu vết việc xuất snapshot vào chính audit.log
             plugin.auditLogger().log("EXPORT", sender.getName(), "-", "",
                     result.file().getName() + " (" + result.entries() + " files, " + kb + " KB)");
+            String prunedNote = result.pruned() > 0
+                    ? " &7(đã dọn " + result.pruned() + " snapshot cũ)" : "";
             Chat.send(sender, config.prefix(), "&aĐã xuất snapshot audit: &f" + result.file().getName()
-                    + " &a(" + kb + " KB, " + result.entries() + " file)");
+                    + " &a(" + kb + " KB, " + result.entries() + " file)" + prunedNote);
             sender.sendMessage(Chat.color(config.prefix()
                     + "&7Đường dẫn: &fplugins/BanhmiVN-CoreSync/exports/" + result.file().getName()));
         } catch (IOException ex) {

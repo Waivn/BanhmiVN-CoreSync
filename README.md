@@ -101,6 +101,8 @@ Nén **toàn bộ trạng thái plugin** thành một file để bàn giao cho a
   `used-codes.yml` (mã đã dùng cục bộ), `pending-rewards.yml` (thưởng còn nợ),
   `items.yml` (item đã bind). File nào chưa tồn tại sẽ được bỏ qua kèm cảnh báo.
 - Mỗi lần xuất được ghi một dòng `EXPORT` vào chính `audit.log`.
+- **Retention:** `exports.retention-days` (mặc định `30`) — snapshot cũ hơn N ngày
+  tự động bị xoá sau mỗi lần xuất và khi plugin enable; đặt `0` để tắt.
 - Chạy đồng bộ trên main thread (đọc+gzip vài MB — nhanh, tránh tranh chấp với các store).
 
 ## Cảnh báo an ninh (Staff alerts)

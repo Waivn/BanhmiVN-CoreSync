@@ -16,6 +16,7 @@ import vn.banhmivn.coresync.history.RedeemHistory;
 import vn.banhmivn.coresync.api.dto.CodeItem;
 import vn.banhmivn.coresync.command.BmvnCommand;
 import vn.banhmivn.coresync.command.NhapCodeCommand;
+import vn.banhmivn.coresync.export.AuditExporter;
 import vn.banhmivn.coresync.config.PluginConfig;
 import vn.banhmivn.coresync.giftcode.GiftCodeGenerator;
 import vn.banhmivn.coresync.giftcode.GiftCodeManager;
@@ -81,6 +82,7 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
         registerCommands();
         Bukkit.getPluginManager().registerEvents(this, this);
         heartbeat.start();
+        pruneOldSnapshots();
 
         getLogger().info("BanhmiVN-CoreSync enabled. "
                 + "Used codes cached: " + usedCache.size()
@@ -146,7 +148,20 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
         giftCodeManager = new GiftCodeManager(this, config, api, generator, usedCache,
                 rewardApplier, pendingRewards, auditLogger, redeemHistory, alerts);
         heartbeat.start();
+        pruneOldSnapshots();
         getLogger().info("Config reloaded.");
+    }
+
+    /** Dọn snapshot cũ trong exports/ theo cấu hình retention (nếu bật). */
+    private void pruneOldSnapshots() {
+        if (config.exportsRetentionDays() <= 0) {
+            return;
+        }
+        int removed = new AuditExporter(getLogger())
+                .pruneExports(getDataFolder(), config.exportsRetentionDays());
+        if (removed > 0) {
+            getLogger().info("Đã dọn " + removed + " snapshot cũ trong exports/.");
+        }
     }
 
     /**

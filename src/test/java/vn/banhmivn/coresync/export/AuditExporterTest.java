@@ -115,6 +115,12 @@ class AuditExporterTest {
         return new String(e.content(), StandardCharsets.UTF_8);
     }
 
+    /** Backdate một file về quá khứ (giả lập snapshot cũ). */
+    private static void age(File f, long daysAgo) {
+        assertTrue(f.setLastModified(System.currentTimeMillis() - daysAgo * 24L * 3600 * 1000),
+                "không set được lastModified cho " + f.getName());
+    }
+
     /** Dựng toàn bộ 6 file nguồn trong thư mục tạm. */
     private static void writeAllStateFiles(File dir) throws IOException {
         Files.writeString(new File(dir, "audit.log").toPath(),
@@ -162,7 +168,7 @@ class AuditExporterTest {
         writeAllStateFiles(tmp);
 
         AuditExporter.SnapshotResult result = new AuditExporter(LOG)
-                .export(tmp, sources(tmp), "Test Server", "1.0.0");
+                .export(tmp, sources(tmp), "Test Server", "1.0.0", 30);
 
         assertTrue(result.file().getName().matches("audit-snapshot-\\d{8}-\\d{6}\\.tar\\.gz"),
                 result.file().getName());
@@ -202,7 +208,7 @@ class AuditExporterTest {
         Files.writeString(rotated.toPath(), "old-lines\n");
 
         AuditExporter.SnapshotResult result = new AuditExporter(LOG)
-                .export(tmp, sources(tmp), "S", "1.0.0");
+                .export(tmp, sources(tmp), "S", "1.0.0", 30);
 
         List<TarEntry> entries = readSnapshot(result.file());
         assertTrue(entries.stream().anyMatch(e -> e.name().equals("audit-1.log")),
@@ -217,7 +223,7 @@ class AuditExporterTest {
         Files.writeString(audit.toPath(), "only-audit\n");
 
         AuditExporter.SnapshotResult result = new AuditExporter(LOG)
-                .export(tmp, sources(tmp), "S", "1.0.0");
+                .export(tmp, sources(tmp), "S", "1.0.0", 30);
 
         List<TarEntry> entries = readSnapshot(result.file());
         assertEquals(2, entries.size()); // MANIFEST.txt + audit.log
@@ -230,7 +236,7 @@ class AuditExporterTest {
     @Test
     void exportsDirIsCreatedAndSnapshotIsValidGzip() throws IOException {
         writeAllStateFiles(tmp);
-        new AuditExporter(LOG).export(tmp, sources(tmp), "S", "1.0.0");
+        new AuditExporter(LOG).export(tmp, sources(tmp), "S", "1.0.0", 30);
 
         File exportsDir = new File(tmp, "exports");
         assertTrue(exportsDir.isDirectory());
@@ -246,12 +252,90 @@ class AuditExporterTest {
     void snapshotContentSurvivesRepeatedExport() throws IOException {
         writeAllStateFiles(tmp);
         AuditExporter exporter = new AuditExporter(LOG);
-        exporter.export(tmp, sources(tmp), "S", "1.0.0");
-        AuditExporter.SnapshotResult second = exporter.export(tmp, sources(tmp), "S", "1.0.0");
+        exporter.export(tmp, sources(tmp), "S", "1.0.0", 30);
+        AuditExporter.SnapshotResult second = exporter.export(tmp, sources(tmp), "S", "1.0.0", 30);
 
         List<TarEntry> entries = readSnapshot(second.file());
         TarEntry auditEntry = entries.stream().filter(e -> e.name().equals("audit.log"))
                 .findFirst().orElseThrow();
         assertEquals(Files.readString(new File(tmp, "audit.log").toPath()), text(auditEntry));
+    }
+
+    // ── Retention ──────────────────────────────────────────
+
+    @Test
+    void pruneWithMissingExportsDirDoesNothing() {
+        assertEquals(0, new AuditExporter(LOG).pruneExports(tmp, 30));
+        assertEquals(0, new AuditExporter(LOG).pruneExports(new File(tmp, "not-exists"), 30));
+    }
+
+    @Test
+    void pruneDisabledKeepsOldSnapshots() throws IOException {
+        File dir = new File(tmp, "exports");
+        assertTrue(dir.mkdirs());
+        File old = new File(dir, "audit-snapshot-20000101-000000.tar.gz");
+        Files.writeString(old.toPath(), "old");
+        age(old, 400); // hơn 1 năm
+
+        assertEquals(0, new AuditExporter(LOG).pruneExports(tmp, 0));
+        assertEquals(0, new AuditExporter(LOG).pruneExports(tmp, -1));
+        assertTrue(old.exists(), "retention tắt thì không được xoá gì");
+    }
+
+    @Test
+    void pruneRemovesOldKeepsFresh() throws IOException {
+        File dir = new File(tmp, "exports");
+        assertTrue(dir.mkdirs());
+        File old1 = new File(dir, "audit-snapshot-20000101-000000.tar.gz");
+        File old2 = new File(dir, "audit-snapshot-20000202-000000.tar.gz");
+        File fresh = new File(dir, "audit-snapshot-20991231-235959.tar.gz");
+        Files.writeString(old1.toPath(), "old1");
+        Files.writeString(old2.toPath(), "old2");
+        Files.writeString(fresh.toPath(), "fresh");
+        age(old1, 60);
+        age(old2, 60);
+
+        int removed = new AuditExporter(LOG).pruneExports(tmp, 30);
+        assertEquals(2, removed);
+        assertFalse(old1.exists());
+        assertFalse(old2.exists());
+        assertTrue(fresh.exists(), "snapshot mới phải được giữ");
+    }
+
+    @Test
+    void pruneIgnoresNonSnapshotFiles() throws IOException {
+        File dir = new File(tmp, "exports");
+        assertTrue(dir.mkdirs());
+        File unrelated = new File(dir, "notes.txt");
+        File tmpFile = new File(dir, "audit-snapshot-12345.tmp"); // file tạm dở dang
+        File otherSnap = new File(dir, "backup-20000101-000000.tar.gz"); // không đúng prefix
+        Files.writeString(unrelated.toPath(), "x");
+        Files.writeString(tmpFile.toPath(), "x");
+        Files.writeString(otherSnap.toPath(), "x");
+        age(unrelated, 400);
+        age(tmpFile, 400);
+        age(otherSnap, 400);
+
+        assertEquals(0, new AuditExporter(LOG).pruneExports(tmp, 30));
+        assertTrue(unrelated.exists());
+        assertTrue(tmpFile.exists());
+        assertTrue(otherSnap.exists());
+    }
+
+    @Test
+    void exportPrunesOldSnapshotsAndReportsCount() throws IOException {
+        writeAllStateFiles(tmp);
+        File dir = new File(tmp, "exports");
+        assertTrue(dir.mkdirs());
+        File old = new File(dir, "audit-snapshot-20000101-000000.tar.gz");
+        Files.writeString(old.toPath(), "old");
+        age(old, 60);
+
+        AuditExporter.SnapshotResult result = new AuditExporter(LOG)
+                .export(tmp, sources(tmp), "S", "1.0.0", 30);
+
+        assertEquals(1, result.pruned());
+        assertFalse(old.exists());
+        assertTrue(result.file().exists(), "snapshot vừa tạo phải còn nguyên");
     }
 }

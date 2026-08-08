@@ -31,7 +31,7 @@ import java.util.zip.GZIPOutputStream;
 public class AuditExporter {
 
     /** Kết quả xuất snapshot. */
-    public record SnapshotResult(File file, long bytes, int entries) {
+    public record SnapshotResult(File file, long bytes, int entries, int pruned) {
     }
 
     /** Các file nguồn cần đóng gói (một số có thể chưa tồn tại — bỏ qua kèm cảnh báo). */
@@ -63,9 +63,11 @@ public class AuditExporter {
      * @param sources       các file nguồn (file chưa tồn tại được bỏ qua)
      * @param serverName    tên server (ghi vào manifest)
      * @param pluginVersion version plugin (ghi vào manifest)
+     * @param retentionDays số ngày giữ snapshot cũ trong exports/ (≤ 0 = không dọn dẹp)
      */
     public SnapshotResult export(File dataFolder, ExportSources sources,
-                                 String serverName, String pluginVersion) throws IOException {
+                                 String serverName, String pluginVersion,
+                                 int retentionDays) throws IOException {
         File exportsDir = new File(dataFolder, "exports");
         if (!exportsDir.exists() && !exportsDir.mkdirs()) {
             throw new IOException("Không tạo được thư mục exports/");
@@ -117,7 +119,46 @@ public class AuditExporter {
         }
         logger.info("Đã xuất snapshot: " + target.getName()
                 + " (" + target.length() + " bytes, " + entries + " entries)");
-        return new SnapshotResult(target, target.length(), entries);
+        int pruned = pruneExports(dataFolder, retentionDays);
+        return new SnapshotResult(target, target.length(), entries, pruned);
+    }
+
+    /**
+     * Xoá snapshot cũ hơn {@code retentionDays} ngày trong {@code exports/}.
+     * Chỉ đụng vào file {@code audit-snapshot-*.tar.gz}; file khác (kể cả file
+     * tạm, file admin bỏ vào) được giữ nguyên. ≤ 0 ngày = tắt. Trả về số file đã xoá.
+     */
+    public int pruneExports(File dataFolder, int retentionDays) {
+        if (retentionDays <= 0) {
+            return 0;
+        }
+        File exportsDir = new File(dataFolder, "exports");
+        if (!exportsDir.isDirectory()) {
+            return 0;
+        }
+        long cutoff = System.currentTimeMillis() - retentionDays * 24L * 3600 * 1000;
+        File[] snapshots = exportsDir.listFiles((dir, name) ->
+                name.startsWith("audit-snapshot-") && name.endsWith(".tar.gz"));
+        if (snapshots == null) {
+            return 0;
+        }
+        int removed = 0;
+        for (File snapshot : snapshots) {
+            long lastModified = snapshot.lastModified();
+            // lastModified() <= 0 = không đọc được mtime → không biết tuổi → GIỮ NGUYÊN
+            if (lastModified <= 0 || lastModified >= cutoff) {
+                continue;
+            }
+            if (snapshot.delete()) {
+                removed++;
+            } else {
+                logger.warning("Không xoá được snapshot cũ: " + snapshot.getName());
+            }
+        }
+        if (removed > 0) {
+            logger.info("Đã dọn " + removed + " snapshot cũ (quá " + retentionDays + " ngày).");
+        }
+        return removed;
     }
 
     private static List<FileSpec> fileSpecs(ExportSources s) {
