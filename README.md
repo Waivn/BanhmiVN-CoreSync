@@ -21,7 +21,7 @@ Minecraft Server ──► BanhmiVN.fun Backend (FastAPI)
 | 🏠 Claim blocks | Lệnh console chuẩn GriefPrevention: `adjustbonusclaimblocks <p> <amount>`. |
 | 📦 Bind item | `/bmvn binditem <key>` lưu **toàn bộ ItemMeta** (NBT, enchant, lore, display name) vào `items.yml`; trao khi redeem (rớt dưới chân nếu inventory đầy). |
 | 📡 Heartbeat 15s | Telemetry `state, player_count, max_players, tps, memory` lên `/api/server/status` — website render trạng thái realtime. |
-| 📜 Audit trail | Mọi sự kiện sinh/đổi giftcode ghi vào `audit.log` (append-only) + `redeem-history.yml` truy vấn theo player qua `/bmvn history`. `/bmvn exportaudit` nén **toàn bộ trạng thái plugin** thành snapshot `.tar.gz` bàn giao admin. |
+| 📜 Audit trail | Mọi sự kiện sinh/đổi giftcode ghi vào `audit.log` (append-only) + `redeem-history.yml` truy vấn theo player qua `/bmvn history`. `/bmvn exportaudit` nén **toàn bộ trạng thái plugin** thành snapshot `.tar.gz`; `/bmvn importaudit` khôi phục lại trên server khác. |
 | 🚨 Staff alerts | Phát hiện hành vi đáng ngờ (vd brute-force nhập code: ≥5 `REDEEM_INVALID` trong 60s) → báo **Discord webhook** và/hoặc **email SMTP** cho staff. Ngưỡng/cửa sổ/cooldown cấu hình được. |
 | 🔁 Pending rewards | Reward chưa trao được (offline / item chưa bind) lưu `pending-rewards.yml`, tự trao lại khi player vào server. |
 | 🛡️ An toàn | Toàn bộ HTTP **async** (Java `HttpClient`) — zero lag main thread. Cache `used-codes.yml` chống dùng lại. Group/giá trị đều được validate chống command injection. |
@@ -60,6 +60,7 @@ Minecraft Server ──► BanhmiVN.fun Backend (FastAPI)
 | `/bmvn code <rank\|point\|land\|item\|crate> <value> [qty]` | Sinh giftcode + sync lên website. |
 | `/bmvn history <player>` | Lịch sử các mã giftcode player đã redeem (20 mã gần nhất). |
 | `/bmvn exportaudit` | Nén toàn bộ trạng thái (audit, history, used-codes, pending-rewards, items) thành snapshot `exports/audit-snapshot-<ts>.tar.gz` kèm `MANIFEST.txt`. |
+| `/bmvn importaudit <file>` | Khôi phục trạng thái từ snapshot `.tar.gz` trong `exports/` (whitelist an toàn, atomic per-file) + nạp lại bộ nhớ. |
 | `/bmvn status` | Trạng thái heartbeat / số liệu. |
 | `/bmvn sync` | Đẩy heartbeat ngay. |
 | `/bmvn reload` | Nạp lại config. |
@@ -104,6 +105,22 @@ Nén **toàn bộ trạng thái plugin** thành một file để bàn giao cho a
 - **Retention:** `exports.retention-days` (mặc định `30`) — snapshot cũ hơn N ngày
   tự động bị xoá sau mỗi lần xuất và khi plugin enable; đặt `0` để tắt.
 - Chạy đồng bộ trên main thread (đọc+gzip vài MB — nhanh, tránh tranh chấp với các store).
+
+### Khôi phục snapshot (`/bmvn importaudit <file>`)
+
+Hoàn tất vòng bàn giao: copy snapshot `.tar.gz` sang thư mục `exports/` của server
+mới, chạy `/bmvn importaudit <file>` để **xem trước**, rồi `/bmvn importaudit <file> confirm`
+để thực hiện → các file trạng thái được ghi lại và store trong bộ nhớ được nạp
+lại ngay (không cần restart). Bước xác nhận bắt buộc vì import sẽ **đè dữ liệu hiện tại**.
+
+An toàn theo thiết kế:
+- Chỉ nhận **tên file phẳng** (không chứa `/`, `\`, `..`) — chống path traversal.
+- Chỉ khôi phục đúng **6 file trạng thái đã biết** (whitelist); entry lạ → từ chối
+  **toàn bộ**, không ghi gì (không bao giờ đè `config.yml`...).
+- Checksum tar được xác thực — file hỏng/không phải snapshot plugin bị từ chối.
+- Chống tar-bomb: giới hạn kích thước mỗi entry (128MB), tổng dung lượng giải nén
+  (256MB) và số entry (64) — kiểm tra trước khi cấp phát bộ nhớ.
+- Mỗi file ghi qua temp + rename (atomic per-file).
 
 ## Cảnh báo an ninh (Staff alerts)
 
@@ -164,7 +181,7 @@ vn.banhmivn.coresync
 ## Build & test
 
 ```bash
-mvn package          # build jar + chạy 33 unit tests (payload, codegen, rank, alerts, export)
+mvn package          # build jar + chạy 52 unit tests (payload, codegen, rank, alerts, export/import)
 ```
 
 - Gson + Jakarta Mail được **shade + relocate** (`vn.banhmivn.libs.*`) — plugin tự

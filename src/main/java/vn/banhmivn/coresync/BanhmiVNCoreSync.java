@@ -129,6 +129,15 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
         }
     }
 
+    /** Nạp lại toàn bộ store từ disk — gọi sau khi /bmvn importaudit ghi xong. */
+    public void reloadStores() {
+        usedCache.load();
+        pendingRewards.reload();
+        itemBinding.reload();
+        redeemHistory.reload();
+        getLogger().info("Đã nạp lại store từ disk sau import: used-codes, pending-rewards, items, redeem-history.");
+    }
+
     /** Nạp lại config + khởi động lại API/heartbeat (giữ cache items/used-codes). */
     public void reloadAll() {
         config.reload();

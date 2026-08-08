@@ -59,6 +59,11 @@ public class PendingRewards {
     }
 
     @SuppressWarnings("unchecked")
+    /** Nạp lại từ disk (dùng sau khi /bmvn importaudit). */
+    public synchronized void reload() {
+        load();
+    }
+
     private void load() {
         pending.clear();
         if (!file.exists()) {

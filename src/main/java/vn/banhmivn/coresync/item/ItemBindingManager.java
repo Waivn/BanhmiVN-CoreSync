@@ -160,6 +160,11 @@ public class ItemBindingManager {
     // ── Persistence ────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
+    /** Nạp lại từ disk (dùng sau khi /bmvn importaudit). */
+    public void reload() {
+        load();
+    }
+
     private void load() {
         store.clear();
         if (!file.exists()) {

@@ -10,6 +10,7 @@ import vn.banhmivn.coresync.api.dto.CodeItem;
 import vn.banhmivn.coresync.audit.AuditLogger;
 import vn.banhmivn.coresync.config.PluginConfig;
 import vn.banhmivn.coresync.export.AuditExporter;
+import vn.banhmivn.coresync.export.AuditImporter;
 import vn.banhmivn.coresync.history.RedeemHistory;
 import vn.banhmivn.coresync.giftcode.GiftCodeManager;
 import vn.banhmivn.coresync.heartbeat.HeartbeatService;
@@ -35,7 +36,8 @@ import java.util.logging.Level;
  *   <li>{@code giveitem <key> <player> [qty]} — trao trực tiếp item đã bind</li>
  *   <li>{@code code <rank|point|land|item|crate> <value> [qty]} — sinh giftcode + sync web</li>
  *   <li>{@code history <player>} — lịch sử các mã player đã redeem</li>
- *   <li>{@code exportaudit} — nén audit.log + redeem-history.yml thành snapshot .tar.gz</li>
+ *   <li>{@code exportaudit} — nén toàn bộ trạng thái thành snapshot .tar.gz</li>
+ *   <li>{@code importaudit <file>} — khôi phục trạng thái từ snapshot .tar.gz</li>
  *   <li>{@code status} — trạng thái heartbeat/telemetry</li>
  *   <li>{@code sync} — đẩy heartbeat ngay lập tức</li>
  *   <li>{@code reload} — nạp lại config.yml</li>
@@ -78,6 +80,7 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
             case "code" -> generateCode(sender, args);
             case "history" -> showHistory(sender, args);
             case "exportaudit" -> exportAudit(sender);
+            case "importaudit" -> importAudit(sender, args);
             case "status" -> showStatus(sender);
             case "sync" -> {
                 heartbeat.tick();
@@ -269,6 +272,51 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    private void importAudit(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            Chat.send(sender, config.prefix(), "&cSử dụng: /bmvn importaudit <file.tar.gz> [confirm]");
+            return;
+        }
+        AuditImporter importer = new AuditImporter(plugin.getLogger());
+        boolean confirmed = args.length >= 3 && "confirm".equalsIgnoreCase(args[2]);
+        try {
+            if (!confirmed) {
+                // Bước xem trước — chưa ghi gì, yêu cầu xác nhận vì import sẽ ĐÈ dữ liệu hiện tại.
+                AuditImporter.ImportResult preview = importer.previewSnapshot(plugin.getDataFolder(), args[1]);
+                if (preview.restored().isEmpty()) {
+                    Chat.send(sender, config.prefix(),
+                            "&eSnapshot hợp lệ nhưng không chứa file trạng thái nào để khôi phục.");
+                    return;
+                }
+                Chat.send(sender, config.prefix(), "&eSnapshot &f" + args[1] + "&e sẽ khôi phục &f"
+                        + preview.restored().size() + " &efile: &f" + String.join(", ", preview.restored()));
+                Chat.send(sender, config.prefix(),
+                        "&eCảnh báo: việc này sẽ ĐÈ dữ liệu hiện tại. Gõ &f/bmvn importaudit "
+                                + args[1] + " confirm&e để thực hiện.");
+                return;
+            }
+
+            AuditImporter.ImportResult result = importer.importSnapshot(plugin.getDataFolder(), args[1]);
+            // Ghi dấu vết dù khôi phục được bao nhiêu file.
+            plugin.auditLogger().log("IMPORT", sender.getName(), "-", "",
+                    args[1] + " restored=" + result.restored());
+            if (result.restored().isEmpty()) {
+                Chat.send(sender, config.prefix(),
+                        "&eSnapshot hợp lệ nhưng không chứa file trạng thái nào để khôi phục.");
+                return;
+            }
+            // Disk đã ghi xong → nạp lại store để bộ nhớ khớp disk.
+            plugin.reloadStores();
+            Chat.send(sender, config.prefix(), "&aĐã khôi phục &f" + result.restored().size()
+                    + " &afile từ &f" + args[1] + "&a — đã nạp lại bộ nhớ.");
+            sender.sendMessage(Chat.color(config.prefix()
+                    + "&7Đã khôi phục: &f" + String.join(", ", result.restored())));
+        } catch (java.io.IOException ex) {
+            plugin.getLogger().log(Level.WARNING, "Import snapshot thất bại: " + args[1], ex);
+            Chat.send(sender, config.prefix(), "&cKhôi phục thất bại: " + ex.getMessage());
+        }
+    }
+
     private void showStatus(CommandSender sender) {
         HeartbeatService.LastResult last = heartbeat.lastResult();
         Chat.send(sender, config.prefix(), "&e— BanhmiVN-CoreSync status —");
@@ -294,6 +342,7 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
                 "&7/bmvn code &f<rank|point|land|item|crate> <value> [qty]",
                 "&7/bmvn history &f<player>",
                 "&7/bmvn exportaudit",
+                "&7/bmvn importaudit &f<file.tar.gz> [confirm]",
                 "&7/bmvn status | sync | reload")) {
             sender.sendMessage(Chat.color(config.prefix() + line));
         }
@@ -324,13 +373,25 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 1) {
             return filter(List.of("binditem", "unbinditem", "listitems", "giveitem",
-                    "code", "history", "exportaudit", "status", "sync", "reload"), args[0]);
+                    "code", "history", "exportaudit", "importaudit", "status", "sync", "reload"), args[0]);
         }
         if (args.length == 2 && "history".equalsIgnoreCase(args[0])) {
             return Bukkit.getOnlinePlayers().stream()
                     .map(Player::getName)
                     .filter(n -> n.toLowerCase(Locale.ROOT).startsWith(args[1].toLowerCase(Locale.ROOT)))
                     .toList();
+        }
+        if (args.length == 2 && "importaudit".equalsIgnoreCase(args[0])) {
+            File exportsDir = new File(plugin.getDataFolder(), "exports");
+            File[] snapshots = exportsDir.listFiles((d, n) -> n.endsWith(".tar.gz"));
+            if (snapshots == null) {
+                return List.of();
+            }
+            return filter(java.util.Arrays.stream(snapshots)
+                    .map(File::getName).toList(), args[1]);
+        }
+        if (args.length == 3 && "importaudit".equalsIgnoreCase(args[0])) {
+            return filter(List.of("confirm"), args[2]);
         }
         if (args.length == 2) {
             switch (args[0].toLowerCase(Locale.ROOT)) {
