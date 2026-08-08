@@ -49,6 +49,23 @@ public class PluginConfig {
     private String msgAlreadyUsed;
     private String msgRedeemSuccess;
     private String msgNotOnline;
+    private String msgRejectedCode;
+
+    // ── Message bổ sung (đưa vào config để chủ server tự chỉnh màu/text) ──
+    private String msgCooldown;            // nhập liên tục quá nhanh
+    private String msgApiNotConfigured;    // hệ thống chưa sẵn sàng nhận mã
+    private String msgErrorOccurred;       // lỗi chung khi xác nhận mã
+    private String msgNetworkError;        // không kết nối được website
+    private String msgPendingRewards;      // một số phần thưởng chưa trao (kèm {items})
+    private String msgRewardsReceived;     // "Bạn nhận được: {items}"
+    private String msgPendingRewardsJoin;  // khi player vào lại còn nợ
+    private String msgRewardsPaidBack;     // đã trao lại phần thưởng còn nợ
+    private String msgSyncNotConfigured;   // admin: chưa cấu hình api.key
+    private String msgSyncFail;            // admin: không đăng ký được code ({detail})
+    private String msgSyncSuccess;         // admin: đã tạo code ({code},{qty},{product})
+    private String msgConsoleOnly;         // /nhapcode từ console
+    private String msgNoPermission;        // thiếu quyền
+    private String msgUsage;               // sai cú pháp ({label})
 
     public PluginConfig(org.bukkit.plugin.Plugin plugin) {
         this.plugin = plugin;
@@ -101,6 +118,37 @@ public class PluginConfig {
         msgAlreadyUsed = cfg.getString("messages.already-used", "&cMã này đã được sử dụng trước đó.");
         msgRedeemSuccess = cfg.getString("messages.redeem-success", "&a🎉 Nhập code thành công! Đã trao phần thưởng cho bạn.");
         msgNotOnline = cfg.getString("messages.not-online", "&cVui lòng đăng nhập lại để nhận phần thưởng.");
+        msgRejectedCode = cfg.getString("messages.rejected-code",
+                "&cMã này đã bị thu hồi/vô hiệu hoá. Liên hệ Admin nếu cần hỗ trợ.");
+
+        msgCooldown = cfg.getString("messages.cooldown",
+                "&cHãy chờ một chút rồi thử lại.");
+        msgApiNotConfigured = cfg.getString("messages.api-not-configured",
+                "&cHệ thống BanhmiVN chưa sẵn sàng nhận mã. Vui lòng liên hệ Admin.");
+        msgErrorOccurred = cfg.getString("messages.error-occurred",
+                "&cCó lỗi xảy ra khi xác nhận mã. Thử lại sau ít phút.");
+        msgNetworkError = cfg.getString("messages.network-error",
+                "&cKhông kết nối được server BanhmiVN. Thử lại sau.");
+        msgPendingRewards = cfg.getString("messages.pending-rewards",
+                "&eMột số phần thưởng chưa trao được (&f{items}&e) — sẽ tự động nhận khi bạn vào lại server.");
+        msgRewardsReceived = cfg.getString("messages.rewards-received",
+                "&aBạn nhận được: &f{items}");
+        msgPendingRewardsJoin = cfg.getString("messages.pending-rewards-join",
+                "&eMột số phần thưởng chưa trao được (vd item chưa bind) — liên hệ Admin.");
+        msgRewardsPaidBack = cfg.getString("messages.rewards-paid-back",
+                "&aĐã trao lại phần thưởng còn nợ cho bạn! 🎉");
+        msgSyncNotConfigured = cfg.getString("messages.sync-not-configured",
+                "&cChưa cấu hình api.key — không thể sync code.");
+        msgSyncFail = cfg.getString("messages.sync-fail",
+                "&cKhông đăng ký được code lên website: {detail}");
+        msgSyncSuccess = cfg.getString("messages.sync-success",
+                "&aĐã tạo giftcode &f{code}&a ({qty}x {product}) — đã đồng bộ lên website.");
+        msgConsoleOnly = cfg.getString("messages.console-only",
+                "&cChỉ người chơi trong game mới nhập được giftcode.");
+        msgNoPermission = cfg.getString("messages.no-permission",
+                "&cBạn không có quyền sử dụng lệnh này.");
+        msgUsage = cfg.getString("messages.usage",
+                "&cSử dụng: /{label} <code>");
     }
 
     private EmailSettings parseEmailSettings() {
@@ -292,5 +340,66 @@ public class PluginConfig {
 
     public String msgNotOnline() {
         return msgNotOnline;
+    }
+
+    /** Thông báo khi mã bị thu hồi (đơn hàng bị admin từ chối) — 410 từ website. */
+    public String msgRejectedCode() {
+        return msgRejectedCode;
+    }
+
+    public String msgCooldown() {
+        return msgCooldown;
+    }
+
+    public String msgApiNotConfigured() {
+        return msgApiNotConfigured;
+    }
+
+    public String msgErrorOccurred() {
+        return msgErrorOccurred;
+    }
+
+    public String msgNetworkError() {
+        return msgNetworkError;
+    }
+
+    public String msgPendingRewards() {
+        return msgPendingRewards;
+    }
+
+    public String msgRewardsReceived() {
+        return msgRewardsReceived;
+    }
+
+    public String msgPendingRewardsJoin() {
+        return msgPendingRewardsJoin;
+    }
+
+    public String msgRewardsPaidBack() {
+        return msgRewardsPaidBack;
+    }
+
+    public String msgSyncNotConfigured() {
+        return msgSyncNotConfigured;
+    }
+
+    public String msgSyncFail() {
+        return msgSyncFail;
+    }
+
+    public String msgSyncSuccess() {
+        return msgSyncSuccess;
+    }
+
+    public String msgConsoleOnly() {
+        return msgConsoleOnly;
+    }
+
+    public String msgNoPermission() {
+        return msgNoPermission;
+    }
+
+    public String msgUsage() {
+        return msgUsage;
     }
 }

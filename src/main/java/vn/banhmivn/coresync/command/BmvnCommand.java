@@ -76,6 +76,7 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
             case "listitems" -> listItems(sender);
             case "giveitem" -> giveItem(sender, args);
             case "code" -> generateCode(sender, args);
+            case "giveaway" -> giveaway(sender, args);
             case "history" -> showHistory(sender, args);
             case "exportaudit" -> exportAudit(sender);
             case "importaudit" -> importAudit(sender, args);
@@ -181,18 +182,26 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
                 giftCodeManager.generateAndSync(sender, "rank", rankDisplay(rankOpt.get()), 1);
             }
             case "point" -> {
-                if (qty <= 0) {
-                    Chat.send(sender, config.prefix(), "&cSố lượng point phải > 0.");
+                // Số point = <value> (args[2]) — đúng cú pháp README "point 500 → 500 point".
+                // Trước đây lấy qty (args[3], mặc định 1) nên /bmvn code point 500
+                // tặng nhầm 1 point.
+                int amount = parseInt(value, 0);
+                if (amount <= 0 || amount > 100_000_000) {
+                    Chat.send(sender, config.prefix(),
+                            "&cSố lượng point phải từ 1 đến 100.000.000 (vd: /bmvn code point 500).");
                     return;
                 }
-                giftCodeManager.generateAndSync(sender, "point", "💎 Đổi Point Server", qty);
+                giftCodeManager.generateAndSync(sender, "point", "💎 Đổi Point Server", amount);
             }
             case "land" -> {
-                if (qty <= 0) {
-                    Chat.send(sender, config.prefix(), "&cSố claim blocks phải > 0.");
+                // Số claim blocks = <value> (args[2]) — "land 1000 → 1000 blocks".
+                int amount = parseInt(value, 0);
+                if (amount <= 0 || amount > 100_000_000) {
+                    Chat.send(sender, config.prefix(),
+                            "&cSố claim blocks phải từ 1 đến 100.000.000 (vd: /bmvn code land 1000).");
                     return;
                 }
-                giftCodeManager.generateAndSync(sender, "land", "🏠 Mua Claim Đất", qty);
+                giftCodeManager.generateAndSync(sender, "land", "🏠 Mua Claim Đất", amount);
             }
             case "item", "crate" -> {
                 String key = value.toLowerCase(Locale.ROOT);
@@ -209,6 +218,38 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
             default -> Chat.send(sender, config.prefix(),
                     "&cLoại không hợp lệ: " + type + " (rank|point|land|item|crate)");
         }
+    }
+
+    /**
+     * Giveaway nhanh: admin CẦM item trên tay → gõ
+     * {@code /bmvn giveaway <tên> [số lượng]} → item được bind vào key
+     * {@code giveaway:<tên>} + sinh giftcode kèm item đó + sync lên web.
+     * Một lệnh duy nhất (không cần binditem trước) — phù hợp tặng quà sự kiện.
+     */
+    private void giveaway(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player admin)) {
+            Chat.send(sender, config.prefix(), config.msgConsoleOnly());
+            return;
+        }
+        if (args.length < 2) {
+            Chat.send(sender, config.prefix(), "&cSử dụng: /bmvn giveaway <tên> [số lượng] (cầm item trên tay)");
+            return;
+        }
+        int qty = args.length >= 3 ? parseInt(args[2], 1) : 1;
+        if (qty <= 0 || qty > 64) {
+            Chat.send(sender, config.prefix(), "&cSố lượng phải từ 1 đến 64.");
+            return;
+        }
+        String key = "giveaway:" + args[1].toLowerCase(Locale.ROOT);
+        String error = itemBinding.bind(admin, key);
+        if (error != null) {
+            Chat.send(sender, config.prefix(), "&c" + error);
+            return;
+        }
+        String itemName = admin.getInventory().getItemInMainHand().getType().name();
+        Chat.send(sender, config.prefix(),
+                "&eĐã bind &f" + itemName + " &evào key &f" + key + "&e — tạo giftcode…");
+        giftCodeManager.generateAndSync(sender, "crate", key, qty);
     }
 
     private void showHistory(CommandSender sender, String[] args) {
@@ -308,6 +349,7 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
                 "&7/bmvn listitems",
                 "&7/bmvn giveitem &f<key> <player> [qty]",
                 "&7/bmvn code &f<rank|point|land|item|crate> <value> [qty]",
+                "&7/bmvn giveaway &f<tên> [số lượng]  (cầm item → tạo code kèm đồ)",
                 "&7/bmvn history &f<player>",
                 "&7/bmvn exportaudit",
                 "&7/bmvn importaudit &f<file.tar.gz> [confirm]",
@@ -341,7 +383,8 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 1) {
             return filter(List.of("binditem", "unbinditem", "listitems", "giveitem",
-                    "code", "history", "exportaudit", "importaudit", "status", "sync", "reload"), args[0]);
+                    "code", "giveaway", "history", "exportaudit", "importaudit",
+                    "status", "sync", "reload"), args[0]);
         }
         if (args.length == 2 && "history".equalsIgnoreCase(args[0])) {
             return Bukkit.getOnlinePlayers().stream()

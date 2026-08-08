@@ -260,6 +260,12 @@ public class HeartbeatService {
         long usedMb = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
 
         String message = config.stateMessage();
+        // Website giới hạn ServerStatusUpdateRequest.message ở max_length=200 —
+        // cắt sớm ở đây để heartbeat không bị từ chối 422 khi admin đặt
+        // state-message quá dài trong config.yml.
+        if (message != null && message.length() > 200) {
+            message = message.substring(0, 200);
+        }
         return new ServerStatusPayload(
                 state.webStatus(),
                 message == null || message.isBlank() ? null : message,

@@ -77,7 +77,7 @@ public class GiftCodeManager {
         long now = System.currentTimeMillis();
         Long prev = lastRedeem.put(player.getUniqueId(), now);
         if (prev != null && now - prev < REDEEM_COOLDOWN_MS) {
-            Chat.send(player, config.prefix(), "&cHãy chờ một chút rồi thử lại.");
+            Chat.send(player, config.prefix(), config.msgCooldown());
             return;
         }
 
@@ -95,8 +95,7 @@ public class GiftCodeManager {
         }
         if (!api.isConfigured()) {
             audit.logRedeemFail(player.getName(), code, "api-not-configured");
-            Chat.send(player, config.prefix(),
-                    "&cKhông thể kết nối BanhmiVN.fun (chưa cấu hình api.key). Liên hệ Admin.");
+            Chat.send(player, config.prefix(), config.msgApiNotConfigured());
             return;
         }
 
@@ -129,7 +128,7 @@ public class GiftCodeManager {
                 // 2xx nhưng body rỗng — coi như lỗi, không trao đồ, code vẫn unused.
                 audit.logRedeemFail(player.getName(), code, "empty-200-body");
                 plugin.getLogger().warning("Redeem trả về 2xx nhưng body rỗng: " + code);
-                Chat.send(player, config.prefix(), "&cCó lỗi xảy ra khi xác nhận mã. Thử lại sau ít phút.");
+                Chat.send(player, config.prefix(), config.msgErrorOccurred());
                 return;
             }
 
@@ -140,9 +139,13 @@ public class GiftCodeManager {
                 // Trao lại khi player vào server lần sau.
                 pendingRewards.add(player.getName(), failed);
                 Chat.send(player, config.prefix(),
-                        "&eMột số phần thưởng chưa trao được, sẽ tự động nhận khi bạn vào lại server.");
+                        config.msgPendingRewards().replace("{items}", rewardsToString(failed)));
             }
             Chat.send(player, config.prefix(), config.msgRedeemSuccess());
+            if (response.getItems() != null && !response.getItems().isEmpty()) {
+                Chat.send(player, config.prefix(),
+                        config.msgRewardsReceived().replace("{items}", rewardsToString(response.getItems())));
+            }
             audit.logRedeemOk(player.getName(), code, response.getItems(),
                     "order=" + (response.getOrderCode() == null ? "-" : response.getOrderCode()));
             redeemHistory.add(player.getName(), code, response.getItems());
@@ -154,6 +157,17 @@ public class GiftCodeManager {
 
     private void handleRedeemError(Player player, String code, Throwable err) {
         if (err instanceof ApiException apiErr) {
+            if (apiErr.getStatusCode() == 410) {
+                // Đơn hàng bị ADMIN TỪ CHỐI — mã vô hiệu vĩnh viễn, KHÁC "đã dùng".
+                // Cache lại để không thử lặp; message lấy từ config (messages.rejected-code).
+                // Ghi REDEEM_FAIL (không phải REDEEM_INVALID) để không tính vào cảnh báo
+                // brute-force — mã bị từ chối không phải hành vi thử sai liên tục.
+                audit.logRedeemFail(player.getName(), code,
+                        "rejected-order: " + apiErr.getDetail());
+                usedCache.markUsed(code, player.getName());
+                Chat.send(player, config.prefix(), config.msgRejectedCode());
+                return;
+            }
             if (apiErr.isAlreadyUsed()) {
                 // Website xác nhận mã đã dùng (hoặc đơn bị từ chối) → cache lại.
                 audit.logRedeemAlreadyUsed(player.getName(), code);
@@ -171,13 +185,13 @@ public class GiftCodeManager {
             audit.logRedeemFail(player.getName(), code, "http-" + apiErr.getStatusCode());
             plugin.getLogger().log(Level.WARNING,
                     "Redeem thất bại code=" + code + " player=" + player.getName(), apiErr);
-            Chat.send(player, config.prefix(), "&cCó lỗi xảy ra khi xác nhận mã. Thử lại sau ít phút.");
+            Chat.send(player, config.prefix(), config.msgErrorOccurred());
             return;
         }
         audit.logRedeemFail(player.getName(), code, "network:" + (err.getMessage() == null ? "?" : err.getMessage()));
         plugin.getLogger().log(Level.WARNING,
                 "Network lỗi khi redeem code=" + code + " player=" + player.getName(), err);
-        Chat.send(player, config.prefix(), "&cKhông kết nối được server BanhmiVN. Thử lại sau.");
+        Chat.send(player, config.prefix(), config.msgNetworkError());
     }
 
     // ── Generate + Sync ─────────────────────────────────────
@@ -188,7 +202,7 @@ public class GiftCodeManager {
     public void generateAndSync(org.bukkit.command.CommandSender sender,
                                 String productType, String productName, int qty) {
         if (!api.isConfigured()) {
-            Chat.send(sender, config.prefix(), "&cChưa cấu hình api.key — không thể sync code.");
+            Chat.send(sender, config.prefix(), config.msgSyncNotConfigured());
             return;
         }
         String code = generator.generate();
@@ -205,16 +219,36 @@ public class GiftCodeManager {
                                 ? "http-" + a.getStatusCode() + " " + a.getDetail()
                                 : "network:" + (err.getMessage() == null ? "?" : err.getMessage()));
                         plugin.getLogger().log(Level.WARNING, "Sync code thất bại: " + code, err);
-                        Chat.send(sender, config.prefix(),
-                                "&cKhông đăng ký được code lên website: "
-                                        + (err instanceof ApiException ae ? ae.getDetail() : "lỗi mạng"));
+                        Chat.send(sender, config.prefix(), config.msgSyncFail().replace(
+                                "{detail}",
+                                err instanceof ApiException ae ? ae.getDetail() : "lỗi mạng"));
                         return;
                     }
                     audit.logSyncOk(code, resp == null ? null : resp.getOrderId());
-                    Chat.send(sender, config.prefix(),
-                            "&aĐã tạo giftcode &f" + code
-                                    + "&a (" + qty + "x " + productName + ") — đã đồng bộ lên website.");
+                    Chat.send(sender, config.prefix(), config.msgSyncSuccess()
+                            .replace("{code}", code)
+                            .replace("{qty}", String.valueOf(qty))
+                            .replace("{product}", productName));
                 }));
+    }
+
+    /**
+     * Liệt kê phần thưởng thân thiện cho player — chỉ dùng product_name (đã có
+     * emoji + tiếng Việt), KHÔNG lộ product_type kỹ thuật (rank/point/land...):
+     * "👑 Rank VIP+ ×1, 💎 Đổi Point Server ×500".
+     */
+    private static String rewardsToString(List<CodeItem> items) {
+        if (items == null || items.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (CodeItem it : items) {
+            if (sb.length() > 0) {
+                sb.append(", ");
+            }
+            sb.append(it.getProductName()).append(" ×").append(it.getQty());
+        }
+        return sb.toString();
     }
 
     public GiftCodeGenerator generator() {

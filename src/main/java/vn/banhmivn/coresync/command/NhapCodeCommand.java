@@ -22,15 +22,15 @@ public class NhapCodeCommand implements CommandExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage("Chỉ người chơi trong game mới nhập được giftcode.");
+            Chat.send(sender, config.prefix(), config.msgConsoleOnly());
             return true;
         }
         if (!player.hasPermission("banhmivn.redeem")) {
-            Chat.send(player, config.prefix(), "&cBạn không có quyền sử dụng lệnh này.");
+            Chat.send(player, config.prefix(), config.msgNoPermission());
             return true;
         }
         if (args.length < 1) {
-            Chat.send(player, config.prefix(), "&cSử dụng: /" + label + " <code>");
+            Chat.send(player, config.prefix(), config.msgUsage().replace("{label}", label));
             return true;
         }
         giftCodeManager.redeem(player, args[0]);

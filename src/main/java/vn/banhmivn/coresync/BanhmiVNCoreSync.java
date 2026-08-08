@@ -364,12 +364,11 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
             }
         }
         if (granted > 0) {
-            Chat.send(player, config.prefix(), "&aĐã trao lại phần thưởng còn nợ cho bạn! 🎉");
+            Chat.send(player, config.prefix(), config.msgRewardsPaidBack());
         }
         if (!stillFailed.isEmpty()) {
             pendingRewards.add(player.getName(), stillFailed);
-            Chat.send(player, config.prefix(),
-                    "&eMột số phần thưởng chưa trao được (vd item chưa bind) — liên hệ Admin.");
+            Chat.send(player, config.prefix(), config.msgPendingRewardsJoin());
         }
     }
 

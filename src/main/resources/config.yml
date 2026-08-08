@@ -108,8 +108,39 @@ alerts:
       cooldown-seconds: 300
 
 messages:
+  # ── Cài đặt chung ──
+  # Prefix in trước mọi dòng thông báo. Màu dùng mã & (Minecraft color codes).
   prefix: "&8[&bBanhmiVN&8] "
+  # ── Người chơi nhập /nhapcode ──
   invalid-code: "&cMã không hợp lệ hoặc không tồn tại."
   already-used: "&cMã này đã được sử dụng trước đó."
   redeem-success: "&a🎉 Nhập code thành công! Đã trao phần thưởng cho bạn."
   not-online: "&cVui lòng đăng nhập lại để nhận phần thưởng."
+  # Mã bị thu hồi (đơn hàng bị admin từ chối) — 410 từ website.
+  rejected-code: "&cMã này đã bị thu hồi/vô hiệu hoá. Liên hệ Admin nếu cần hỗ trợ."
+  # Nhập code liên tục quá nhanh (chống spam).
+  cooldown: "&cHãy chờ một chút rồi thử lại."
+  # Hệ thống chưa cấu hình api.key — không nhận được mã.
+  api-not-configured: "&cHệ thống BanhmiVN chưa sẵn sàng nhận mã. Vui lòng liên hệ Admin."
+  # Lỗi chung khi xác nhận mã (HTTP 5xx, body rỗng...).
+  error-occurred: "&cCó lỗi xảy ra khi xác nhận mã. Thử lại sau ít phút."
+  # Không kết nối được website.
+  network-error: "&cKhông kết nối được server BanhmiVN. Thử lại sau."
+  # Một số phần thưởng chưa trao được — {items} thay bằng danh sách phần thưởng.
+  pending-rewards: "&eMột số phần thưởng chưa trao được (&f{items}&e) — sẽ tự động nhận khi bạn vào lại server."
+  # Liệt kê phần thưởng vừa nhận — {items} thay bằng danh sách.
+  rewards-received: "&aBạn nhận được: &f{items}"
+  # Khi player vào lại server mà còn phần thưởng nợ chưa trao được.
+  pending-rewards-join: "&eMột số phần thưởng chưa trao được (vd item chưa bind) — liên hệ Admin."
+  # Đã trao lại phần thưởng còn nợ.
+  rewards-paid-back: "&aĐã trao lại phần thưởng còn nợ cho bạn! 🎉"
+  # Lệnh /nhapcode từ console hoặc thiếu quyền.
+  console-only: "&cChỉ người chơi trong game mới nhập được giftcode."
+  no-permission: "&cBạn không có quyền sử dụng lệnh này."
+  usage: "&cSử dụng: /{label} <code>"
+  # ── Admin sinh code (/bmvn code) ──
+  sync-not-configured: "&cChưa cấu hình api.key — không thể sync code."
+  # {detail} thay bằng lỗi từ website.
+  sync-fail: "&cKhông đăng ký được code lên website: {detail}"
+  # {code} {qty} {product} tự động điền khi tạo code thành công.
+  sync-success: "&aĐã tạo giftcode &f{code}&a ({qty}x {product}) — đã đồng bộ lên website."

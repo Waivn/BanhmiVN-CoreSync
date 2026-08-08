@@ -205,7 +205,8 @@ public class RewardApplier {
             return "";
         }
         // Bỏ emoji/tiền tố như "🎁 Crate PREMIUM" → "premium"
-        String cleaned = name.replaceAll("[^\\p{L}\\p{N} _\\-]", "")
+        // Giữ cả ":" vì key bind có thể dạng "crate:<tên>" / "giveaway:<tên>"
+        String cleaned = name.replaceAll("[^\\p{L}\\p{N} _\\-:]", "")
                 .replaceAll("(?i)crate", "")
                 .trim()
                 .toLowerCase(Locale.ROOT);

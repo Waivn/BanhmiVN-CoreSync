@@ -30,7 +30,8 @@ import java.util.regex.Pattern;
  */
 public class ItemBindingManager {
 
-    private static final Pattern KEY_PATTERN = Pattern.compile("[a-z0-9_\\-]{1,64}");
+    // Cho phép dấu ":" vì hệ thống dùng prefix phân nhóm: "crate:<key>", "giveaway:<key>"
+    private static final Pattern KEY_PATTERN = Pattern.compile("[a-z0-9_:-]{1,64}");
 
     private final Plugin plugin;
     private final File file;
