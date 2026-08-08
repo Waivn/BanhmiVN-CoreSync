@@ -9,6 +9,7 @@ import org.bukkit.entity.Player;
 import vn.banhmivn.coresync.api.dto.CodeItem;
 import vn.banhmivn.coresync.audit.AuditLogger;
 import vn.banhmivn.coresync.config.PluginConfig;
+import vn.banhmivn.coresync.export.AuditExporter;
 import vn.banhmivn.coresync.history.RedeemHistory;
 import vn.banhmivn.coresync.giftcode.GiftCodeManager;
 import vn.banhmivn.coresync.heartbeat.HeartbeatService;
@@ -16,10 +17,13 @@ import vn.banhmivn.coresync.item.ItemBindingManager;
 import vn.banhmivn.coresync.rank.RankType;
 import vn.banhmivn.coresync.util.Chat;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.logging.Level;
 
 /**
  * Lệnh admin {@code /bmvn}:
@@ -31,6 +35,7 @@ import java.util.Optional;
  *   <li>{@code giveitem <key> <player> [qty]} — trao trực tiếp item đã bind</li>
  *   <li>{@code code <rank|point|land|item|crate> <value> [qty]} — sinh giftcode + sync web</li>
  *   <li>{@code history <player>} — lịch sử các mã player đã redeem</li>
+ *   <li>{@code exportaudit} — nén audit.log + redeem-history.yml thành snapshot .tar.gz</li>
  *   <li>{@code status} — trạng thái heartbeat/telemetry</li>
  *   <li>{@code sync} — đẩy heartbeat ngay lập tức</li>
  *   <li>{@code reload} — nạp lại config.yml</li>
@@ -72,6 +77,7 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
             case "giveitem" -> giveItem(sender, args);
             case "code" -> generateCode(sender, args);
             case "history" -> showHistory(sender, args);
+            case "exportaudit" -> exportAudit(sender);
             case "status" -> showStatus(sender);
             case "sync" -> {
                 heartbeat.tick();
@@ -233,6 +239,31 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(Chat.color(config.prefix() + "&7Trail đầy đủ: &f" + plugin.auditLogger().file().getName()));
     }
 
+    private void exportAudit(CommandSender sender) {
+        try {
+            File dataFolder = plugin.getDataFolder();
+            AuditExporter exporter = new AuditExporter(plugin.getLogger());
+            AuditExporter.SnapshotResult result = exporter.export(
+                    dataFolder,
+                    new File(dataFolder, "audit.log"),
+                    new File(dataFolder, "audit.log.1"),
+                    new File(dataFolder, "redeem-history.yml"),
+                    config.serverName(),
+                    plugin.getDescription().getVersion());
+            String kb = String.format(Locale.ROOT, "%.1f", result.bytes() / 1024.0);
+            // Ghi dấu vết việc xuất snapshot vào chính audit.log
+            plugin.auditLogger().log("EXPORT", sender.getName(), "-", "",
+                    result.file().getName() + " (" + result.entries() + " files, " + kb + " KB)");
+            Chat.send(sender, config.prefix(), "&aĐã xuất snapshot audit: &f" + result.file().getName()
+                    + " &a(" + kb + " KB, " + result.entries() + " file)");
+            sender.sendMessage(Chat.color(config.prefix()
+                    + "&7Đường dẫn: &fplugins/BanhmiVN-CoreSync/exports/" + result.file().getName()));
+        } catch (IOException ex) {
+            plugin.getLogger().log(Level.SEVERE, "Xuất snapshot audit thất bại", ex);
+            Chat.send(sender, config.prefix(), "&cXuất snapshot thất bại — xem log server.");
+        }
+    }
+
     private void showStatus(CommandSender sender) {
         HeartbeatService.LastResult last = heartbeat.lastResult();
         Chat.send(sender, config.prefix(), "&e— BanhmiVN-CoreSync status —");
@@ -257,6 +288,7 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
                 "&7/bmvn giveitem &f<key> <player> [qty]",
                 "&7/bmvn code &f<rank|point|land|item|crate> <value> [qty]",
                 "&7/bmvn history &f<player>",
+                "&7/bmvn exportaudit",
                 "&7/bmvn status | sync | reload")) {
             sender.sendMessage(Chat.color(config.prefix() + line));
         }
@@ -287,7 +319,7 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 1) {
             return filter(List.of("binditem", "unbinditem", "listitems", "giveitem",
-                    "code", "history", "status", "sync", "reload"), args[0]);
+                    "code", "history", "exportaudit", "status", "sync", "reload"), args[0]);
         }
         if (args.length == 2 && "history".equalsIgnoreCase(args[0])) {
             return Bukkit.getOnlinePlayers().stream()
