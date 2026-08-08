@@ -197,6 +197,111 @@ def main():
         }, headers)
         check("status invalid -> 422", code == 422, f"got {code}")
 
+        # ── 6. /api/audit — admin-only giftcode audit trail (web ↔ in-game) ──
+        # Admin JWT
+        code, login = request("POST", "/auth/login", {
+            "email": "e2e@banhmivn.fun",
+            "password": "e2e-password-123",
+        })
+        check("admin login", code == 200 and login.get("access_token"), f"got {code} {login}")
+        admin_headers = {"Authorization": f"Bearer {login['access_token']}"}
+
+        # Real web purchase: top up balance, then checkout via /api/shop/order
+        con = sqlite3.connect(DB_PATH)
+        con.execute("UPDATE users SET balance = 100000 WHERE email = 'e2e@banhmivn.fun'")
+        con.commit()
+        con.close()
+        code, shop = request("POST", "/api/shop/order", {
+            "items": [{"product_type": "rank", "product_name": "👑 Rank VIP",
+                       "qty": 1, "unit_price": 50000}],
+            "recipient_ign": "Alex",
+            "idempotency_key": "audit-e2e-1",
+        }, {"Authorization": f"Bearer {login['access_token']}"})
+        web_code = (shop.get("order") or {}).get("redemption_code") if isinstance(shop, dict) else None
+        check("web order created with giftcode", code == 200 and web_code, f"got {code} {shop}")
+
+        # Cross-check material: player claims the WEB-purchased code in-game
+        code, resp = request("POST", "/api/codes/redeem", {
+            "code": web_code, "player_name": "Alex",
+        }, headers)
+        check("web order code redeemed in-game", code == 200 and resp.get("status") == "used",
+              f"got {code} {resp}")
+
+        # Non-admin user must be rejected
+        code, u_reg = request("POST", "/auth/register", {
+            "email": "normal@banhmivn.fun", "password": "e2e-password-123",
+            "username": "normal", "minecraft_ign": "Normal",
+        })
+        code, u_login = request("POST", "/auth/login", {
+            "email": "normal@banhmivn.fun", "password": "e2e-password-123",
+        })
+        code, resp = request("GET", "/api/audit",
+                             headers={"Authorization": f"Bearer {u_login['access_token']}"})
+        check("audit non-admin -> 403", code == 403, f"got {code} {resp}")
+        code, resp = request("GET", "/api/audit")
+        check("audit no auth -> 401/403", code in (401, 403), f"got {code}")
+
+        # Admin: both web + plugin sources present, newest first
+        code, resp = request("GET", "/api/audit", headers=admin_headers)
+        items = resp.get("items", []) if isinstance(resp, dict) else []
+        sources = {it.get("source") for it in items}
+        ok = (code == 200 and resp.get("total", 0) >= 2
+              and "plugin" in sources and "web" in sources
+              and items[0].get("redemption_code") == web_code)
+        check("audit lists web + plugin codes (newest first)", ok,
+              f"got {code} total={resp.get('total')} sources={sources}")
+
+        code, resp = request("GET", "/api/audit?source=plugin", headers=admin_headers)
+        items = resp.get("items", []) if isinstance(resp, dict) else []
+        ok = code == 200 and resp.get("total", 0) >= 1 and all(
+            it.get("source") == "plugin" for it in items)
+        check("audit source=plugin filter", ok, f"got {code} total={resp.get('total')}")
+
+        code, resp = request("GET", "/api/audit?source=web", headers=admin_headers)
+        items = resp.get("items", []) if isinstance(resp, dict) else []
+        ok = code == 200 and resp.get("total", 0) >= 1 and all(
+            it.get("source") == "web" for it in items)
+        check("audit source=web filter", ok, f"got {code} total={resp.get('total')}")
+
+        code, resp = request("GET", "/api/audit?status=used", headers=admin_headers)
+        items = resp.get("items", []) if isinstance(resp, dict) else []
+        ok = code == 200 and resp.get("total", 0) >= 2 and all(
+            it.get("redemption_status") == "used" for it in items)
+        check("audit status=used filter", ok, f"got {code} total={resp.get('total')}")
+
+        code, resp = request("GET", "/api/audit?status=hacker", headers=admin_headers)
+        check("audit invalid status -> 422", code == 422, f"got {code}")
+        code, resp = request("GET", "/api/audit?source=foo", headers=admin_headers)
+        check("audit invalid source -> 422", code == 422, f"got {code}")
+
+        # LIKE wildcards escaped: player=% must match nothing, not everything
+        code, resp = request("GET", "/api/audit?player=%", headers=admin_headers)
+        items = resp.get("items", []) if isinstance(resp, dict) else []
+        check("audit LIKE wildcard escaped (player=%% -> 0)",
+              code == 200 and resp.get("total") == 0 and items == [], f"got {code} {resp}")
+
+        # Search by code (case-insensitive, partial)
+        code, resp = request("GET", "/api/audit?code=" + web_code.lower(), headers=admin_headers)
+        items = resp.get("items", []) if isinstance(resp, dict) else []
+        ok = code == 200 and resp.get("total") == 1 and items[0].get("redemption_code") == web_code
+        check("audit code search (case-insensitive)", ok, f"got {code} {resp}")
+
+        code, resp = request("GET", "/api/audit?player=alex", headers=admin_headers)
+        items = resp.get("items", []) if isinstance(resp, dict) else []
+        ok = code == 200 and resp.get("total", 0) >= 1 and all(
+            "alex" in (it.get("redeemed_by") or "").lower()
+            or "alex" in (it.get("recipient_ign") or "").lower()
+            for it in items)
+        check("audit player filter (case-insensitive)", ok, f"got {code} total={resp.get('total')}")
+
+        # Item details echoed so admin can cross-check rewards
+        code, resp = request("GET", "/api/audit?player=alex&source=web", headers=admin_headers)
+        items = resp.get("items", []) if isinstance(resp, dict) else []
+        first = items[0] if items else {}
+        ok = code == 200 and first.get("items") and first["items"][0]["product_type"] == "rank" \
+            and first.get("user_email") == "e2e@banhmivn.fun"
+        check("audit item + web account details echoed", ok, f"got {code} {first}")
+
         print(f"\n===== E2E RESULT: {PASS} passed, {FAIL} failed =====")
         return 0 if FAIL == 0 else 1
     finally:
