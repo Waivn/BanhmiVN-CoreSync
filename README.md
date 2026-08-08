@@ -1,0 +1,114 @@
+# BanhmiVN-CoreSync
+
+Plugin Paper/Spigot đồng bộ **BanhmiVN.fun** với máy chủ Minecraft:
+giftcode một lần, rank **LuckPerms**, point **PlayerPoints**, claim blocks
+**GriefPrevention**, bind item, và telemetry server realtime.
+
+```
+Minecraft Server ──► BanhmiVN.fun Backend (FastAPI)
+   /nhapcode <code>      POST /api/codes/redeem   (X-API-Key)
+   /bmvn code ...        POST /api/codes/sync     (X-API-Key)
+   heartbeat 15s         POST /api/server/status  (X-API-Key)
+```
+
+## Tính năng
+
+| Tính năng | Chi tiết |
+|---|---|
+| 🎁 Giftcode một lần | Định dạng `BMVN-XXXX-XXXX-XXXX` (bảng chữ cái bỏ I/O/L/0, giống website). Plugin tự sinh + đăng ký lên web qua `/api/codes/sync`, hoặc nhận code mua trên web. |
+| 🏷️ Rank LuckPerms | **Strict mapping** — chỉ `vip`, `vip_plus`, `svip` được trao. Dùng API LuckPerms (`parent set` tương đương) hoặc lệnh console `lp user <p> parent set <rank>`. Rank lạ từ web bị từ chối + log. |
+| 💎 Point PlayerPoints | API qua reflection (hỗ trợ cả bản 2.x lẫn 3.x) hoặc lệnh console `p give <p> <amount>`. |
+| 🏠 Claim blocks | Lệnh console chuẩn GriefPrevention: `adjustbonusclaimblocks <p> <amount>`. |
+| 📦 Bind item | `/bmvn binditem <key>` lưu **toàn bộ ItemMeta** (NBT, enchant, lore, display name) vào `items.yml`; trao khi redeem (rớt dưới chân nếu inventory đầy). |
+| 📡 Heartbeat 15s | Telemetry `state, player_count, max_players, tps, memory` lên `/api/server/status` — website render trạng thái realtime. |
+| 🔁 Pending rewards | Reward chưa trao được (offline / item chưa bind) lưu `pending-rewards.yml`, tự trao lại khi player vào server. |
+| 🛡️ An toàn | Toàn bộ HTTP **async** (Java `HttpClient`) — zero lag main thread. Cache `used-codes.yml` chống dùng lại. Group/giá trị đều được validate chống command injection. |
+
+## Cài đặt
+
+1. **Website** (đã có sẵn endpoint): đặt biến môi trường trên backend:
+   ```
+   MC_API_KEY=<secret-của-bạn>
+   MC_API_KEY_HEADER=X-API-Key
+   ```
+   (`.env.example` đã có sẵn 2 dòng này.)
+2. Đặt `BanhmiVN-CoreSync.jar` vào thư mục `plugins/` của server Paper 1.21+ (Java 21).
+3. Cài các plugin soft-depend: **LuckPerms**, **PlayerPoints**, **GriefPrevention**.
+4. Chỉnh `plugins/BanhmiVN-CoreSync/config.yml`:
+   - `api.base-url` — `https://banhmivn.fun`
+   - `api.key` — giống `MC_API_KEY` trên website
+   - `server.state` — `ONLINE | MAINTENANCE | CLOSED | UPCOMING_LAUNCH`
+   - `server.heartbeat-interval-seconds` — mặc định `15`
+5. `/bmvn reload` hoặc restart server.
+
+## Lệnh
+
+### Người chơi
+| Lệnh | Mô tả |
+|---|---|
+| `/nhapcode <code>` (alias `/claim`) | Nhập giftcode nhận thưởng. |
+
+### Admin (`banhmivn.admin`)
+| Lệnh | Mô tả |
+|---|---|
+| `/bmvn binditem <key>` | Bind item đang cầm vào key. |
+| `/bmvn unbinditem <key>` | Xoá binding. |
+| `/bmvn listitems` | Danh sách key đã bind. |
+| `/bmvn giveitem <key> <player> [qty]` | Trao trực tiếp item đã bind. |
+| `/bmvn code <rank\|point\|land\|item\|crate> <value> [qty]` | Sinh giftcode + sync lên website. |
+| `/bmvn status` | Trạng thái heartbeat / số liệu. |
+| `/bmvn sync` | Đẩy heartbeat ngay. |
+| `/bmvn reload` | Nạp lại config. |
+
+Ví dụ sinh code:
+```
+/bmvn code rank vip+          → code tặng rank VIP+
+/bmvn code point 500          → code tặng 500 point
+/bmvn code land 1000          → code tặng 1000 claim blocks
+/bmvn binditem crate:premium  → bind key Crate Premium (cầm key trong tay)
+/bmvn code crate premium      → code tặng Crate Premium
+```
+
+## Ánh xạ reward (từ website `/api/codes/redeem`)
+
+| `product_type` | Xử lý trong game |
+|---|---|
+| `rank` | Chuẩn hoá `"👑 Rank VIP+"` → enum STRICT → LuckPerms |
+| `point` | PlayerPoints API hoặc `p give` |
+| `land` | `adjustbonusclaimblocks <p> <qty>` |
+| `crate` / `item` | Trao item đã bind (`crate:<name>` hoặc `<name>`) |
+
+## Kiến trúc
+
+```
+vn.banhmivn.coresync
+├── BanhmiVNCoreSync        # onEnable: null-check softdepend, wiring, join listener
+├── config/PluginConfig     # typed config + reload
+├── api/ApiClient           # async HTTP (Java HttpClient), X-API-Key, timeout
+│   └── dto/                # payload khớp CHÍNH XÁC schema website (snake_case)
+├── giftcode/               # Generator (BMVN-...), GiftCodeManager, UsedCodeCache
+├── rank/RankType           # STRICT enum vip / vip_plus / svip
+├── reward/                 # RewardApplier (LP/PP/GP/item) + PendingRewards
+├── item/ItemBindingManager # items.yml (base64 ItemStack đầy đủ NBT/meta)
+├── heartbeat/              # HeartbeatService 15s
+└── command/                # NhapCodeCommand + BmvnCommand (tab-complete)
+```
+
+## Build & test
+
+```bash
+mvn package          # build jar + chạy 16 unit tests (payload, codegen, rank)
+```
+
+- Gson được **shade + relocate** (`vn.banhmivn.libs.gson`) — plugin tự chứa, không đụng bản Gson của server.
+- Luồng E2E (sync → redeem → status) chạy được với backend thật qua `scripts/e2e-test.py`.
+
+## API contract (website)
+
+| Endpoint | Body (JSON) | Ghi chú |
+|---|---|---|
+| `POST /api/codes/redeem` | `{code, player_name?, ign?}` | 200 → items; 404 invalid; 409 used; 410 rejected |
+| `POST /api/codes/sync` | `{code, player_name?, items:[{product_type, product_name, qty}]}` | đăng ký code plugin sinh; 409 trùng |
+| `POST /api/server/status` | `{status?, message?, player_count?, max_players?, tps?, ping?}` | merge — chỉ field gửi mới đè |
+
+Auth: header `X-API-Key` (= `MC_API_KEY` trên website). Trạng thái web: `online | offline | maintenance | update`.

@@ -1,0 +1,22 @@
+# Build output
+target/
+
+# Local portable toolchain (JDK / Maven downloaded for offline builds)
+.tools/
+
+# Local runtime data
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# OS
+Thumbs.db
+.DS_Store

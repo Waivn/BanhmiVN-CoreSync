@@ -1,0 +1,32 @@
+name: BanhmiVN-CoreSync
+version: 1.0.0
+main: vn.banhmivn.coresync.BanhmiVNCoreSync
+api-version: '1.21'
+authors: [BanhmiVN]
+description: >
+  BanhmiVN.fun core sync: one-time giftcodes (BMVN-XXXX-XXXX), LuckPerms ranks,
+  PlayerPoints credits, GriefPrevention claim blocks, admin item binding and
+  real-time server status telemetry.
+website: https://banhmivn.fun
+softdepend:
+  - LuckPerms
+  - PlayerPoints
+  - GriefPrevention
+
+commands:
+  nhapcode:
+    description: Nhập một Giftcode BanhmiVN để nhận phần thưởng trong game.
+    usage: /nhapcode <code>
+    aliases: [claim]
+  bmvn:
+    description: Quản trị plugin BanhmiVN-CoreSync (bind item, sinh giftcode, status...).
+    usage: /bmvn <subcommand>
+    permission: banhmivn.admin
+
+permissions:
+  banhmivn.admin:
+    description: Toàn quyền quản trị BanhmiVN-CoreSync.
+    default: op
+  banhmivn.redeem:
+    description: Được phép nhập giftcode (/nhapcode, /claim).
+    default: true

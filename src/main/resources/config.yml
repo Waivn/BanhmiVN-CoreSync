@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────
+#  BanhmiVN-CoreSync — config.yml
+#  Cấu hình kết nối backend BanhmiVN.fun + tích hợp in-game.
+# ─────────────────────────────────────────────────────────────
+
+api:
+  # Base URL của backend BanhmiVN.fun (không có dấu / ở cuối).
+  base-url: "https://banhmivn.fun"
+  # Secret API key (khớp với biến môi trường MC_API_KEY trên website).
+  # Để trống → plugin KHÔNG gọi các endpoint yêu cầu key
+  # (/api/codes/redeem, /api/codes/sync, /api/server/status) và log cảnh báo.
+  key: ""
+  # Tên header chứa API key (mặc định website là X-API-Key).
+  key-header: "X-API-Key"
+  # Thời gian chờ tối đa cho mỗi HTTP request (giây).
+  timeout-seconds: 10
+
+server:
+  # ID/name định danh node server này (hiển thị trên website).
+  id: "main"
+  name: "BanhmiVN Survival"
+  # Trạng thái khai báo của server: ONLINE | MAINTENANCE | CLOSED | UPCOMING_LAUNCH
+  # Ánh xạ sang web status: ONLINE→online, MAINTENANCE→maintenance,
+  # CLOSED→offline, UPCOMING_LAUNCH→update.
+  state: "ONLINE"
+  # Message tuỳ chọn gửi kèm telemetry (để trống = không gửi).
+  state-message: ""
+  # Chu kỳ heartbeat (giây). Mặc định 15s theo spec.
+  heartbeat-interval-seconds: 15
+
+ranks:
+  # Dùng LuckPerms API trực tiếp (khuyến nghị). Nếu false → chạy lệnh console
+  # `lp user <player> parent set <rank>`.
+  use-api: true
+  # Nhóm LuckPerms cho từng rank hợp lệ (STRICT — chỉ 3 rank này được chấp nhận).
+  # Mọi rank khác gửi từ website đều bị từ chối + log.
+  groups:
+    vip: "vip"
+    vip_plus: "vip_plus"
+    svip: "svip"
+
+points:
+  # Dùng PlayerPoints API trực tiếp (PlayerPoints.getInstance().getAPI().give).
+  # Nếu false (hoặc PlayerPoints chưa cài) → lệnh console `p give <player> <amount>`.
+  use-api: true
+
+griefprevention:
+  # Luôn chạy qua lệnh console `/adjustbonusclaimblocks <player> <amount>`
+  # (yêu cầu GriefPrevention). Chỉ nhận reward product_type = "land".
+
+items:
+  # Có tự động trao item đã bind khi redeem code loại crate/item không.
+  give-on-redeem: true
+
+messages:
+  prefix: "&8[&bBanhmiVN&8] "
+  invalid-code: "&cMã không hợp lệ hoặc không tồn tại."
+  already-used: "&cMã này đã được sử dụng trước đó."
+  redeem-success: "&a🎉 Nhập code thành công! Đã trao phần thưởng cho bạn."
+  not-online: "&cVui lòng đăng nhập lại để nhận phần thưởng."
