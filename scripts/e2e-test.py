@@ -54,6 +54,45 @@ def request(method: str, path: str, body=None, headers=None):
             return e.code, raw
 
 
+def multipart_upload(path: str, fields: dict, files: dict, headers=None):
+    """POST multipart/form-data (field + file) — dùng cho /api/export."""
+    boundary = "----e2e" + str(int(time.time() * 1000))
+    body = b""
+    for name, value in fields.items():
+        body += (f"--{boundary}\r\n"
+                 f"Content-Disposition: form-data; name=\"{name}\"\r\n\r\n"
+                 f"{value}\r\n").encode()
+    for name, (filename, content_type, data) in files.items():
+        body += (f"--{boundary}\r\n"
+                 f"Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n"
+                 f"Content-Type: {content_type}\r\n\r\n").encode()
+        body += data + b"\r\n"
+    body += (f"--{boundary}--\r\n").encode()
+    req = urllib.request.Request(BASE + path, data=body, method="POST",
+                                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
+                                          **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode()
+            return resp.status, json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode()
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, raw
+
+
+def download(path: str, headers=None):
+    """GET nhị phân (tải snapshot) → (status, bytes, headers)."""
+    req = urllib.request.Request(BASE + path, method="GET", headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status, resp.read(), {k.lower(): v for k, v in resp.headers.items()}
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), {k.lower(): v for k, v in e.headers.items()}
+
+
 def main():
     # ── 1. Clean + boot the app on the throwaway DB ──
     if os.path.exists(DB_PATH):
@@ -301,6 +340,67 @@ def main():
         ok = code == 200 and first.get("items") and first["items"][0]["product_type"] == "rank" \
             and first.get("user_email") == "e2e@banhmivn.fun"
         check("audit item + web account details echoed", ok, f"got {code} {first}")
+
+        # ── 7. /api/export — snapshot push/download round-trip ──
+        import gzip as _gzip
+        snap1 = _gzip.compress(b"audit-snapshot-e2e\n" * 100)
+        up = {"X-API-Key": API_KEY}
+
+        code, resp = multipart_upload("/api/export", {"server": "main"},
+                                      {"file": ("audit-snapshot-e2e.tar.gz", "application/gzip", snap1)}, up)
+        ok = code == 200 and resp.get("server_id") == "main" \
+            and resp.get("size") == len(snap1) and resp.get("sha256") and len(resp.get("sha256")) == 64
+        check("export upload OK", ok, f"got {code} {resp}")
+        sha1 = resp.get("sha256")
+
+        code, resp = multipart_upload("/api/export", {"server": "main"},
+                                      {"file": ("x.tar.gz", "application/gzip", snap1)})
+        check("export upload missing key -> 401", code == 401, f"got {code}")
+
+        code, resp = multipart_upload("/api/export", {"server": "main"},
+                                      {"file": ("x.txt", "text/plain", b"not a snapshot")}, up)
+        check("export non-gzip -> 422", code == 422, f"got {code}")
+
+        code, resp = multipart_upload("/api/export", {"server": "bad server id!"},
+                                      {"file": ("x.tar.gz", "application/gzip", snap1)}, up)
+        check("export bad server id -> 422", code == 422, f"got {code}")
+
+        # Filename sanitization: regex khóa ký tự để chống header-injection
+        # qua Content-Disposition (filename từ client upload).
+        code, resp = multipart_upload("/api/export", {"server": "main"},
+                                      {"file": ("../snap.tar.gz", "application/gzip", snap1)}, up)
+        check("export traversal filename -> 422", code == 422, f"got {code}")
+
+        code, resp = multipart_upload("/api/export", {"server": "main"},
+                                      {"file": ("snap evil name.tar.gz", "application/gzip", snap1)}, up)
+        check("export unsafe filename -> 422", code == 422, f"got {code}")
+
+        # Replace: upload lần 2 → vẫn 1 bản/server, sha256 đổi
+        snap2 = _gzip.compress(b"audit-snapshot-e2e-v2\n" * 100)
+        code, resp = multipart_upload("/api/export", {"server": "main"},
+                                      {"file": ("audit-snapshot-e2e-v2.tar.gz", "application/gzip", snap2)}, up)
+        check("export replace (latest per server)", code == 200 and resp.get("sha256") != sha1, f"got {code}")
+        sha2 = resp.get("sha256")
+
+        code, resp = request("GET", "/api/export/list", headers=admin_headers)
+        items = resp if isinstance(resp, list) else []
+        ok = code == 200 and len(items) == 1 and items[0]["server_id"] == "main" \
+            and items[0]["sha256"] == sha2
+        check("export list (admin JWT)", ok, f"got {code} {resp}")
+
+        code, resp = request("GET", "/api/export/list")
+        check("export list no auth -> 401/403", code in (401, 403), f"got {code}")
+
+        code, data, hdrs = download("/api/export/latest?server=main", admin_headers)
+        ok = code == 200 and data == snap2 and hdrs.get("x-snapshot-sha256") == sha2 \
+            and "audit-snapshot-e2e-v2.tar.gz" in hdrs.get("content-disposition", "")
+        check("export latest download matches", ok, f"got {code} len={len(data)}")
+
+        code, data, hdrs = download("/api/export/latest?server=ghost", admin_headers)
+        check("export latest unknown server -> 404", code == 404, f"got {code}")
+
+        code, data, hdrs = download("/api/export/latest")
+        check("export latest no auth -> 401/403", code in (401, 403), f"got {code}")
 
         print(f"\n===== E2E RESULT: {PASS} passed, {FAIL} failed =====")
         return 0 if FAIL == 0 else 1

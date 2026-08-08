@@ -21,7 +21,7 @@ Minecraft Server ──► BanhmiVN.fun Backend (FastAPI)
 | 🏠 Claim blocks | Lệnh console chuẩn GriefPrevention: `adjustbonusclaimblocks <p> <amount>`. |
 | 📦 Bind item | `/bmvn binditem <key>` lưu **toàn bộ ItemMeta** (NBT, enchant, lore, display name) vào `items.yml`; trao khi redeem (rớt dưới chân nếu inventory đầy). |
 | 📡 Heartbeat 15s | Telemetry `state, player_count, max_players, tps, memory` lên `/api/server/status` — website render trạng thái realtime. |
-| 📜 Audit trail | Mọi sự kiện sinh/đổi giftcode ghi vào `audit.log` (append-only) + `redeem-history.yml` truy vấn theo player qua `/bmvn history`. `/bmvn exportaudit` nén **toàn bộ trạng thái plugin** thành snapshot `.tar.gz`; `/bmvn importaudit` khôi phục lại trên server khác. |
+| 📜 Audit trail | Mọi sự kiện sinh/đổi giftcode ghi vào `audit.log` (append-only) + `redeem-history.yml` truy vấn theo player qua `/bmvn history`. `/bmvn exportaudit` nén **toàn bộ trạng thái plugin** thành snapshot `.tar.gz` và **đẩy lên website** (`/api/export`) để staff tải về; `/bmvn importaudit` khôi phục lại trên server khác. |
 | 🚨 Staff alerts | Phát hiện hành vi đáng ngờ (vd brute-force nhập code: ≥5 `REDEEM_INVALID` trong 60s) → báo **Discord webhook** và/hoặc **email SMTP** cho staff. Ngưỡng/cửa sổ/cooldown cấu hình được. |
 | 🔁 Pending rewards | Reward chưa trao được (offline / item chưa bind) lưu `pending-rewards.yml`, tự trao lại khi player vào server. |
 | 🛡️ An toàn | Toàn bộ HTTP **async** (Java `HttpClient`) — zero lag main thread. Cache `used-codes.yml` chống dùng lại. Group/giá trị đều được validate chống command injection. |
@@ -104,6 +104,9 @@ Nén **toàn bộ trạng thái plugin** thành một file để bàn giao cho a
 - Mỗi lần xuất được ghi một dòng `EXPORT` vào chính `audit.log`.
 - **Retention:** `exports.retention-days` (mặc định `30`) — snapshot cũ hơn N ngày
   tự động bị xoá sau mỗi lần xuất và khi plugin enable; đặt `0` để tắt.
+- **Đẩy lên website:** sau khi xuất, snapshot được POST lên `POST /api/export`
+  (X-API-Key) cho staff tải về từ trang admin; tắt bằng
+  `exports.push-to-website: false`.
 - Chạy đồng bộ trên main thread (đọc+gzip vài MB — nhanh, tránh tranh chấp với các store).
 
 ### Khôi phục snapshot (`/bmvn importaudit <file>`)
@@ -181,7 +184,7 @@ vn.banhmivn.coresync
 ## Build & test
 
 ```bash
-mvn package          # build jar + chạy 52 unit tests (payload, codegen, rank, alerts, export/import)
+mvn package          # build jar + chạy 55 unit tests (payload, codegen, rank, alerts, export/import, multipart)
 ```
 
 - Gson + Jakarta Mail được **shade + relocate** (`vn.banhmivn.libs.*`) — plugin tự
@@ -195,5 +198,8 @@ mvn package          # build jar + chạy 52 unit tests (payload, codegen, rank,
 | `POST /api/codes/redeem` | `{code, player_name?, ign?}` | 200 → items; 404 invalid; 409 used; 410 rejected |
 | `POST /api/codes/sync` | `{code, player_name?, items:[{product_type, product_name, qty}]}` | đăng ký code plugin sinh; 409 trùng |
 | `POST /api/server/status` | `{status?, message?, player_count?, max_players?, tps?, ping?}` | merge — chỉ field gửi mới đè |
+| `POST /api/export` | multipart: `server` + file `file` (.tar.gz) | đẩy snapshot audit — giữ bản mới nhất/server |
+| `GET /api/export/list` / `latest?server=` | — | admin JWT — danh sách / tải snapshot về |
 
-Auth: header `X-API-Key` (= `MC_API_KEY` trên website). Trạng thái web: `online | offline | maintenance | update`.
+Auth: header `X-API-Key` (= `MC_API_KEY` trên website) cho upload; JWT admin cho download.
+Trạng thái web: `online | offline | maintenance | update`.

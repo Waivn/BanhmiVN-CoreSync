@@ -34,6 +34,7 @@ public class PluginConfig {
     private boolean giveItemOnRedeem;
 
     private int exportsRetentionDays;
+    private boolean pushSnapshotsToWebsite;
 
     private boolean alertsEnabled;
     private String discordWebhookUrl;
@@ -71,6 +72,7 @@ public class PluginConfig {
         giveItemOnRedeem = cfg.getBoolean("items.give-on-redeem", true);
 
         exportsRetentionDays = Math.max(0, cfg.getInt("exports.retention-days", 30));
+        pushSnapshotsToWebsite = cfg.getBoolean("exports.push-to-website", true);
 
         alertsEnabled = cfg.getBoolean("alerts.enabled", true);
         discordWebhookUrl = cfg.getString("alerts.discord-webhook-url", "").trim();
@@ -195,6 +197,11 @@ public class PluginConfig {
     /** Số ngày giữ snapshot trong exports/ (0 = không dọn dẹp). */
     public int exportsRetentionDays() {
         return exportsRetentionDays;
+    }
+
+    /** Đẩy snapshot lên website (POST /api/export) sau khi xuất. */
+    public boolean pushSnapshotsToWebsite() {
+        return pushSnapshotsToWebsite;
     }
 
     public boolean alertsEnabled() {

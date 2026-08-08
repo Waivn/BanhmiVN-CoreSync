@@ -9,12 +9,16 @@ import vn.banhmivn.coresync.api.dto.CodeSyncRequest;
 import vn.banhmivn.coresync.api.dto.CodeSyncResponse;
 import vn.banhmivn.coresync.api.dto.ServerStatusPayload;
 
+import java.io.File;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -63,6 +67,41 @@ public class ApiClient {
     /** Đẩy telemetry server status (heartbeat). */
     public CompletableFuture<ServerStatusPayload> pushStatus(ServerStatusPayload payload) {
         return post("/api/server/status", payload, ServerStatusPayload.class);
+    }
+
+    /**
+     * Đẩy snapshot audit (.tar.gz) lên {@code POST /api/export} cho staff tải về
+     * (multipart/form-data: field {@code server} + file {@code file}).
+     */
+    public CompletableFuture<Void> uploadSnapshot(File snapshot, String serverId) {
+        if (!isConfigured()) {
+            return CompletableFuture.failedFuture(
+                    new ApiException(0, "MC_API_KEY chưa được cấu hình trên plugin (api.key rỗng)"));
+        }
+        try {
+            byte[] content = Files.readAllBytes(snapshot.toPath());
+            MultipartBody.Body body = MultipartBody.build(List.of(
+                    new MultipartBody.Part("server", null, null,
+                            serverId.getBytes(StandardCharsets.UTF_8)),
+                    new MultipartBody.Part("file", snapshot.getName(), "application/gzip", content)));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/api/export"))
+                    .timeout(timeout)
+                    .header(apiKeyHeader, apiKey)
+                    .header("Content-Type", "multipart/form-data; boundary=" + body.boundary())
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(body.bytes()))
+                    .build();
+
+            return http.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+                    .thenApply(response -> {
+                        handle(response, Object.class); // 2xx → ok; khác → ApiException
+                        return null;
+                    });
+        } catch (IOException ex) {
+            return CompletableFuture.failedFuture(
+                    new ApiException(0, "Không đọc được snapshot: " + ex.getMessage()));
+        }
     }
 
     private <T> CompletableFuture<T> post(String path, Object body, Class<T> responseType) {

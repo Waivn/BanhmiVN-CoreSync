@@ -56,6 +56,9 @@ exports:
   # Tự động xoá snapshot cũ trong exports/ sau mỗi lần /bmvn exportaudit
   # và khi plugin enable. 0 (hoặc âm) = tắt dọn dẹp.
   retention-days: 30
+  # Sau khi xuất, đẩy snapshot .tar.gz lên website (POST /api/export, X-API-Key)
+  # để staff tải về từ trang admin ở bất kỳ đâu. Cần api.key đã cấu hình.
+  push-to-website: true
 
 alerts:
   # Cảnh báo staff khi phát hiện hành vi đáng ngờ trong audit stream

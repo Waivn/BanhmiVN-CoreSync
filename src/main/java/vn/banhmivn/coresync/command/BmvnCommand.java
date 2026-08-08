@@ -264,6 +264,7 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
                     ? " &7(đã dọn " + result.pruned() + " snapshot cũ)" : "";
             Chat.send(sender, config.prefix(), "&aĐã xuất snapshot audit: &f" + result.file().getName()
                     + " &a(" + kb + " KB, " + result.entries() + " file)" + prunedNote);
+            pushSnapshotToWebsite(sender, result.file());
             sender.sendMessage(Chat.color(config.prefix()
                     + "&7Đường dẫn: &fplugins/BanhmiVN-CoreSync/exports/" + result.file().getName()));
         } catch (IOException ex) {
@@ -315,6 +316,33 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
             plugin.getLogger().log(Level.WARNING, "Import snapshot thất bại: " + args[1], ex);
             Chat.send(sender, config.prefix(), "&cKhôi phục thất bại: " + ex.getMessage());
         }
+    }
+
+    /** Đẩy snapshot vừa xuất lên website cho staff tải (async — không chặn main). */
+    private void pushSnapshotToWebsite(CommandSender sender, java.io.File snapshot) {
+        if (!config.pushSnapshotsToWebsite()) {
+            return;
+        }
+        if (!plugin.apiClient().isConfigured()) {
+            Chat.send(sender, config.prefix(),
+                    "&7Bỏ qua đẩy lên website (chưa cấu hình api.key).");
+            return;
+        }
+        plugin.apiClient().uploadSnapshot(snapshot, config.serverId())
+                .whenComplete((v, err) -> Bukkit.getScheduler().runTask(plugin, () -> {
+                    if (err != null) {
+                        String detail = err instanceof java.io.IOException io
+                                ? io.getMessage()
+                                : (err.getMessage() == null ? "lỗi mạng" : err.getMessage());
+                        plugin.getLogger().log(Level.WARNING,
+                                "Không đẩy được snapshot lên website: " + detail);
+                        Chat.send(sender, config.prefix(),
+                                "&cKhông đẩy được snapshot lên website (" + detail + ").");
+                    } else {
+                        Chat.send(sender, config.prefix(),
+                                "&aĐã đẩy snapshot lên website — staff tải về từ trang admin.");
+                    }
+                }));
     }
 
     private void showStatus(CommandSender sender) {
