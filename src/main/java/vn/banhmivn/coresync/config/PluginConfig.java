@@ -35,6 +35,7 @@ public class PluginConfig {
 
     private int exportsRetentionDays;
     private boolean pushSnapshotsToWebsite;
+    private int exportsAutoPushIntervalHours;
     private String exportsEncryptionKey;
 
     private boolean alertsEnabled;
@@ -74,6 +75,7 @@ public class PluginConfig {
 
         exportsRetentionDays = Math.max(0, cfg.getInt("exports.retention-days", 30));
         pushSnapshotsToWebsite = cfg.getBoolean("exports.push-to-website", true);
+        exportsAutoPushIntervalHours = Math.max(0, cfg.getInt("exports.auto-push-interval-hours", 6));
         exportsEncryptionKey = cfg.getString("exports.encryption-key", "").trim();
         if (pushSnapshotsToWebsite && exportsEncryptionKey.isEmpty()) {
             plugin.getLogger().warning(
@@ -217,6 +219,14 @@ public class PluginConfig {
      */
     public String exportsEncryptionKey() {
         return exportsEncryptionKey;
+    }
+
+    /**
+     * Chu kỳ auto-push snapshot (giờ); 0 = tắt.
+     * Chạy định kỳ xuất + đẩy snapshot lên website kể cả khi không ai dùng /bmvn exportaudit.
+     */
+    public int exportsAutoPushIntervalHours() {
+        return exportsAutoPushIntervalHours;
     }
 
     public boolean alertsEnabled() {

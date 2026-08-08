@@ -59,6 +59,10 @@ exports:
   # Sau khi xuất, đẩy snapshot .tar.gz lên website (POST /api/export, X-API-Key)
   # để staff tải về từ trang admin ở bất kỳ đâu. Cần api.key đã cấu hình.
   push-to-website: true
+  # Tự động xuất + đẩy snapshot audit lên website định kỳ (giờ), kể cả khi
+  # không ai chạy /bmvn exportaudit. 0 (hoặc âm) = tắt. Cần push-to-website
+  # và api.key đã cấu hình; chạy trên main thread (đọc audit.log an toàn).
+  auto-push-interval-hours: 6
   # Mã hoá AES-256-GCM snapshot trước khi đẩy lên website (encrypt at-rest):
   # website chỉ lưu bản mã hoá, giải mã khi staff tải về.
   # Giá trị = base64 của 32 byte, PHẢI khớp với SNAPSHOT_ENCRYPTION_KEY trên website.

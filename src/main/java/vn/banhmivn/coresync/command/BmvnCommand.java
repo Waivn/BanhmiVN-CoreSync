@@ -9,9 +9,7 @@ import org.bukkit.entity.Player;
 import vn.banhmivn.coresync.api.dto.CodeItem;
 import vn.banhmivn.coresync.audit.AuditLogger;
 import vn.banhmivn.coresync.config.PluginConfig;
-import vn.banhmivn.coresync.export.AuditExporter;
 import vn.banhmivn.coresync.export.AuditImporter;
-import vn.banhmivn.coresync.export.SnapshotCipher;
 import vn.banhmivn.coresync.history.RedeemHistory;
 import vn.banhmivn.coresync.giftcode.GiftCodeManager;
 import vn.banhmivn.coresync.heartbeat.HeartbeatService;
@@ -20,7 +18,6 @@ import vn.banhmivn.coresync.rank.RankType;
 import vn.banhmivn.coresync.util.Chat;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -244,34 +241,9 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
     }
 
     private void exportAudit(CommandSender sender) {
-        try {
-            File dataFolder = plugin.getDataFolder();
-            AuditExporter exporter = new AuditExporter(plugin.getLogger());
-            AuditExporter.ExportSources sources = new AuditExporter.ExportSources(
-                    new File(dataFolder, "audit.log"),
-                    new File(dataFolder, "audit.log.1"),
-                    new File(dataFolder, "redeem-history.yml"),
-                    new File(dataFolder, "used-codes.yml"),
-                    new File(dataFolder, "pending-rewards.yml"),
-                    new File(dataFolder, "items.yml"));
-            AuditExporter.SnapshotResult result = exporter.export(
-                    dataFolder, sources, config.serverName(),
-                    plugin.getDescription().getVersion(), config.exportsRetentionDays());
-            String kb = String.format(Locale.ROOT, "%.1f", result.bytes() / 1024.0);
-            // Ghi dấu vết việc xuất snapshot vào chính audit.log
-            plugin.auditLogger().log("EXPORT", sender.getName(), "-", "",
-                    result.file().getName() + " (" + result.entries() + " files, " + kb + " KB)");
-            String prunedNote = result.pruned() > 0
-                    ? " &7(đã dọn " + result.pruned() + " snapshot cũ)" : "";
-            Chat.send(sender, config.prefix(), "&aĐã xuất snapshot audit: &f" + result.file().getName()
-                    + " &a(" + kb + " KB, " + result.entries() + " file)" + prunedNote);
-            pushSnapshotToWebsite(sender, result.file());
-            sender.sendMessage(Chat.color(config.prefix()
-                    + "&7Đường dẫn: &fplugins/BanhmiVN-CoreSync/exports/" + result.file().getName()));
-        } catch (IOException ex) {
-            plugin.getLogger().log(Level.SEVERE, "Xuất snapshot audit thất bại", ex);
-            Chat.send(sender, config.prefix(), "&cXuất snapshot thất bại — xem log server.");
-        }
+        // Logic dùng chung với auto-push định kỳ (SnapshotAutoPush) — sống ở plugin class.
+        plugin.performSnapshotExport("EXPORT", sender.getName(),
+                s -> Chat.send(sender, config.prefix(), s));
     }
 
     private void importAudit(CommandSender sender, String[] args) {
@@ -316,57 +288,6 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
         } catch (java.io.IOException ex) {
             plugin.getLogger().log(Level.WARNING, "Import snapshot thất bại: " + args[1], ex);
             Chat.send(sender, config.prefix(), "&cKhôi phục thất bại: " + ex.getMessage());
-        }
-    }
-
-    /** Đẩy snapshot vừa xuất lên website cho staff tải (async — không chặn main). */
-    private void pushSnapshotToWebsite(CommandSender sender, java.io.File snapshot) {
-        if (!config.pushSnapshotsToWebsite()) {
-            return;
-        }
-        if (!plugin.apiClient().isConfigured()) {
-            Chat.send(sender, config.prefix(),
-                    "&7Bỏ qua đẩy lên website (chưa cấu hình api.key).");
-            return;
-        }
-        // Mã hoá at-rest: nếu key cấu hình sai → KHÔNG đẩy (fail-loud, không downgrade bản rõ).
-        SnapshotCipher cipher = null;
-        String keyB64 = config.exportsEncryptionKey();
-        if (!keyB64.isBlank()) {
-            try {
-                cipher = SnapshotCipher.fromBase64(keyB64);
-            } catch (IllegalArgumentException ex) {
-                plugin.getLogger().warning("Bỏ qua đẩy snapshot: " + ex.getMessage());
-                Chat.send(sender, config.prefix(),
-                        "&cKhông đẩy snapshot lên website (key mã hoá không hợp lệ): " + ex.getMessage());
-                return;
-            }
-        }
-        final boolean encrypted = cipher != null;
-        try {
-            plugin.apiClient().uploadSnapshot(snapshot, config.serverId(), cipher)
-                    .whenComplete((v, err) -> Bukkit.getScheduler().runTask(plugin, () -> {
-                    if (err != null) {
-                        String detail = err instanceof java.io.IOException io
-                                ? io.getMessage()
-                                : (err.getMessage() == null ? "lỗi mạng" : err.getMessage());
-                        plugin.getLogger().log(Level.WARNING,
-                                "Không đẩy được snapshot lên website: " + detail);
-                        Chat.send(sender, config.prefix(),
-                                "&cKhông đẩy được snapshot lên website (" + detail + ").");
-                    } else {
-                        Chat.send(sender, config.prefix(),
-                                "&aĐã đẩy snapshot lên website"
-                                        + (encrypted ? " (mã hoá AES-256)" : " (KHÔNG mã hoá)")
-                                        + " — staff tải về từ trang admin.");
-                    }
-                }));
-        } catch (RuntimeException ex) {
-            // Phòng thủ: nếu mã hoá/Multipart lỗi sync (không nên xảy ra sau khi ApiClient
-            // đã bọc failedFuture) — báo lỗi thay vì ném ra khỏi command.
-            plugin.getLogger().log(Level.WARNING, "Đẩy snapshot thất bại (sync): " + ex.getMessage());
-            Chat.send(sender, config.prefix(),
-                    "&cĐẩy snapshot lên website thất bại: " + ex.getMessage());
         }
     }
 

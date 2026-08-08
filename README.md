@@ -107,6 +107,13 @@ Nén **toàn bộ trạng thái plugin** thành một file để bàn giao cho a
 - **Đẩy lên website:** sau khi xuất, snapshot được POST lên `POST /api/export`
   (X-API-Key) cho staff tải về từ trang admin; tắt bằng
   `exports.push-to-website: false`.
+- **⏰ Auto-push định kỳ:** `exports.auto-push-interval-hours` (mặc định `6`,
+  `0` = tắt) — cứ mỗi N giờ plugin tự xuất + đẩy snapshot mới lên website kể cả
+  khi không ai chạy `/bmvn exportaudit`, để trang admin luôn có bản mới nhất.
+  Lưu ý: bật mặc định — server đã cấu hình `api.key` + `push-to-website` sẽ tự
+  xuất/đẩy mỗi 6h sau khi nâng cấp (đặt `0` để tắt). Chạy trên main thread
+  (an toàn với audit.log), ghi event `AUTO_EXPORT` vào `audit.log`; tắt ngầm
+  khi `push-to-website=false` hoặc `api.key` rỗng.
 - **🔒 Mã hoá at-rest:** nếu đặt `exports.encryption-key` (base64 của 32 byte, sinh
   bằng `openssl rand -base64 32`), snapshot được mã hoá **AES-256-GCM** trước khi
   đẩy lên — website chỉ lưu bản mã hoá (`BMVNENC1 || IV || ciphertext || tag`),
@@ -192,7 +199,7 @@ vn.banhmivn.coresync
 ## Build & test
 
 ```bash
-mvn package          # build jar + chạy 63 unit tests (payload, codegen, rank, alerts, export/import, multipart, crypto)
+mvn package          # build jar + chạy 65 unit tests (payload, codegen, rank, alerts, export/import, multipart, crypto, auto-push)
 ```
 
 - Gson + Jakarta Mail được **shade + relocate** (`vn.banhmivn.libs.*`) — plugin tự

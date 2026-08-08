@@ -17,6 +17,8 @@ import vn.banhmivn.coresync.api.dto.CodeItem;
 import vn.banhmivn.coresync.command.BmvnCommand;
 import vn.banhmivn.coresync.command.NhapCodeCommand;
 import vn.banhmivn.coresync.export.AuditExporter;
+import vn.banhmivn.coresync.export.SnapshotAutoPush;
+import vn.banhmivn.coresync.export.SnapshotCipher;
 import vn.banhmivn.coresync.config.PluginConfig;
 import vn.banhmivn.coresync.giftcode.GiftCodeGenerator;
 import vn.banhmivn.coresync.giftcode.GiftCodeManager;
@@ -27,7 +29,12 @@ import vn.banhmivn.coresync.reward.PendingRewards;
 import vn.banhmivn.coresync.reward.RewardApplier;
 import vn.banhmivn.coresync.util.Chat;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
+import java.util.function.Consumer;
+import java.util.logging.Level;
 
 /**
  * BanhmiVN-CoreSync — plugin lõi đồng bộ BanhmiVN.fun:
@@ -49,6 +56,7 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
     private HeartbeatService heartbeat;
     private SuspicionDetector alerts;
     private AlertNotifier alertNotifier;
+    private SnapshotAutoPush autoPush;
 
     @Override
     public void onEnable() {
@@ -83,6 +91,8 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
         Bukkit.getPluginManager().registerEvents(this, this);
         heartbeat.start();
         pruneOldSnapshots();
+        autoPush = new SnapshotAutoPush(this);
+        autoPush.start();
 
         getLogger().info("BanhmiVN-CoreSync enabled. "
                 + "Used codes cached: " + usedCache.size()
@@ -94,6 +104,9 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
+        if (autoPush != null) {
+            autoPush.stop();
+        }
         if (heartbeat != null) {
             heartbeat.pushFinalOffline();
             heartbeat.stop();
@@ -158,6 +171,11 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
                 rewardApplier, pendingRewards, auditLogger, redeemHistory, alerts);
         heartbeat.start();
         pruneOldSnapshots();
+        if (autoPush != null) {
+            autoPush.stop();
+        }
+        autoPush = new SnapshotAutoPush(this);
+        autoPush.start();
         getLogger().info("Config reloaded.");
     }
 
@@ -170,6 +188,103 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
                 .pruneExports(getDataFolder(), config.exportsRetentionDays());
         if (removed > 0) {
             getLogger().info("Đã dọn " + removed + " snapshot cũ trong exports/.");
+        }
+    }
+
+    /**
+     * Xuất snapshot audit + (nếu cấu hình) đẩy lên website. Dùng chung cho
+     * {@code /bmvn exportaudit} và auto-push định kỳ ({@link SnapshotAutoPush}).
+     *
+     * @param auditEvent event ghi vào audit.log: {@code EXPORT} (lệnh) hoặc {@code AUTO_EXPORT} (tự động)
+     * @param actor      tên người thực hiện (sender name) hoặc "scheduler" khi tự động
+     * @param chat       sink gửi thông báo chat (nullable — auto-push không có CommandSender)
+     */
+    public void performSnapshotExport(String auditEvent, String actor, Consumer<String> chat) {
+        try {
+            File dataFolder = getDataFolder();
+            AuditExporter exporter = new AuditExporter(getLogger());
+            AuditExporter.ExportSources sources = new AuditExporter.ExportSources(
+                    new File(dataFolder, "audit.log"),
+                    new File(dataFolder, "audit.log.1"),
+                    new File(dataFolder, "redeem-history.yml"),
+                    new File(dataFolder, "used-codes.yml"),
+                    new File(dataFolder, "pending-rewards.yml"),
+                    new File(dataFolder, "items.yml"));
+            AuditExporter.SnapshotResult result = exporter.export(
+                    dataFolder, sources, config.serverName(),
+                    getDescription().getVersion(), config.exportsRetentionDays());
+            String kb = String.format(Locale.ROOT, "%.1f", result.bytes() / 1024.0);
+            // Ghi dấu vết việc xuất snapshot vào chính audit.log
+            auditLogger.log(auditEvent, actor, "-", "",
+                    result.file().getName() + " (" + result.entries() + " files, " + kb + " KB)");
+            String prunedNote = result.pruned() > 0
+                    ? " &7(đã dọn " + result.pruned() + " snapshot cũ)" : "";
+            notify(chat, "&aĐã xuất snapshot audit: &f" + result.file().getName()
+                    + " &a(" + kb + " KB, " + result.entries() + " file)" + prunedNote);
+            if (chat == null) {
+                // Auto-push không có CommandSender → ghi console để ops xác nhận scheduler chạy.
+                getLogger().info("Auto-push: đã xuất snapshot " + result.file().getName()
+                        + " (" + kb + " KB, " + result.entries() + " file, " + auditEvent + ")");
+            }
+            pushSnapshotToWebsite(chat, result.file());
+            notify(chat, "&7Đường dẫn: &fplugins/BanhmiVN-CoreSync/exports/" + result.file().getName());
+        } catch (IOException ex) {
+            getLogger().log(Level.SEVERE, "Xuất snapshot audit thất bại", ex);
+            notify(chat, "&cXuất snapshot thất bại — xem log server.");
+        }
+    }
+
+    /** Đẩy snapshot vừa xuất lên website cho staff tải (async — không chặn main). */
+    private void pushSnapshotToWebsite(Consumer<String> chat, File snapshot) {
+        if (!config.pushSnapshotsToWebsite()) {
+            return;
+        }
+        if (!api.isConfigured()) {
+            notify(chat, "&7Bỏ qua đẩy lên website (chưa cấu hình api.key).");
+            return;
+        }
+        // Mã hoá at-rest: nếu key cấu hình sai → KHÔNG đẩy (fail-loud, không downgrade bản rõ).
+        SnapshotCipher cipher = null;
+        String keyB64 = config.exportsEncryptionKey();
+        if (!keyB64.isBlank()) {
+            try {
+                cipher = SnapshotCipher.fromBase64(keyB64);
+            } catch (IllegalArgumentException ex) {
+                getLogger().warning("Bỏ qua đẩy snapshot: " + ex.getMessage());
+                notify(chat, "&cKhông đẩy snapshot lên website (key mã hoá không hợp lệ): " + ex.getMessage());
+                return;
+            }
+        }
+        final boolean encrypted = cipher != null;
+        try {
+            api.uploadSnapshot(snapshot, config.serverId(), cipher)
+                    .whenComplete((v, err) -> Bukkit.getScheduler().runTask(this, () -> {
+                        if (err != null) {
+                            String detail = err instanceof IOException io
+                                    ? io.getMessage()
+                                    : (err.getMessage() == null ? "lỗi mạng" : err.getMessage());
+                            getLogger().log(Level.WARNING,
+                                    "Không đẩy được snapshot lên website: " + detail);
+                            notify(chat, "&cKhông đẩy được snapshot lên website (" + detail + ").");
+                        } else {
+                            getLogger().info("Đã đẩy snapshot lên website: " + snapshot.getName()
+                                    + (encrypted ? " (mã hoá AES-256)" : " (bản rõ)"));
+                            notify(chat, "&aĐã đẩy snapshot lên website"
+                                    + (encrypted ? " (mã hoá AES-256)" : " (KHÔNG mã hoá)")
+                                    + " — staff tải về từ trang admin.");
+                        }
+                    }));
+        } catch (RuntimeException ex) {
+            // Phòng thủ: nếu mã hoá/Multipart lỗi sync (không nên xảy ra sau khi ApiClient
+            // đã bọc failedFuture) — báo lỗi thay vì ném ra khỏi caller.
+            getLogger().log(Level.WARNING, "Đẩy snapshot thất bại (sync): " + ex.getMessage());
+            notify(chat, "&cĐẩy snapshot lên website thất bại: " + ex.getMessage());
+        }
+    }
+
+    private static void notify(Consumer<String> chat, String message) {
+        if (chat != null) {
+            chat.accept(message);
         }
     }
 
