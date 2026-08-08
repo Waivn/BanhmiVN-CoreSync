@@ -3,6 +3,7 @@ package vn.banhmivn.coresync.giftcode;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
+import vn.banhmivn.coresync.audit.AuditLogger;
 import vn.banhmivn.coresync.api.ApiClient;
 import vn.banhmivn.coresync.api.ApiException;
 import vn.banhmivn.coresync.api.dto.CodeItem;
@@ -10,6 +11,7 @@ import vn.banhmivn.coresync.api.dto.CodeRedeemResponse;
 import vn.banhmivn.coresync.api.dto.CodeSyncRequest;
 import vn.banhmivn.coresync.api.dto.CodeSyncResponse;
 import vn.banhmivn.coresync.config.PluginConfig;
+import vn.banhmivn.coresync.history.RedeemHistory;
 import vn.banhmivn.coresync.reward.PendingRewards;
 import vn.banhmivn.coresync.reward.RewardApplier;
 import vn.banhmivn.coresync.util.Chat;
@@ -37,6 +39,8 @@ public class GiftCodeManager {
     private final UsedCodeCache usedCache;
     private final RewardApplier rewardApplier;
     private final PendingRewards pendingRewards;
+    private final AuditLogger audit;
+    private final RedeemHistory redeemHistory;
 
     /** Cooldown nhẹ chống spam /nhapcode (3s/player) — mọi truy cập trên main thread. */
     private static final long REDEEM_COOLDOWN_MS = 3000;
@@ -44,7 +48,8 @@ public class GiftCodeManager {
 
     public GiftCodeManager(Plugin plugin, PluginConfig config, ApiClient api,
                            GiftCodeGenerator generator, UsedCodeCache usedCache,
-                           RewardApplier rewardApplier, PendingRewards pendingRewards) {
+                           RewardApplier rewardApplier, PendingRewards pendingRewards,
+                           AuditLogger audit, RedeemHistory redeemHistory) {
         this.plugin = plugin;
         this.config = config;
         this.api = api;
@@ -52,6 +57,8 @@ public class GiftCodeManager {
         this.usedCache = usedCache;
         this.rewardApplier = rewardApplier;
         this.pendingRewards = pendingRewards;
+        this.audit = audit;
+        this.redeemHistory = redeemHistory;
     }
 
     // ── Redeem ──────────────────────────────────────────────
@@ -70,14 +77,17 @@ public class GiftCodeManager {
         }
 
         if (!GiftCodeGenerator.isValidFormat(code)) {
+            audit.logRedeemInvalid(player.getName(), code, "bad-format");
             Chat.send(player, config.prefix(), config.msgInvalidCode());
             return;
         }
         if (usedCache.isUsed(code)) {
+            audit.logRedeemAlreadyUsed(player.getName(), code);
             Chat.send(player, config.prefix(), config.msgAlreadyUsed());
             return;
         }
         if (!api.isConfigured()) {
+            audit.logRedeemFail(player.getName(), code, "api-not-configured");
             Chat.send(player, config.prefix(),
                     "&cKhông thể kết nối BanhmiVN.fun (chưa cấu hình api.key). Liên hệ Admin.");
             return;
@@ -96,6 +106,9 @@ public class GiftCodeManager {
                 if (err == null && response != null) {
                     usedCache.markUsed(code, player.getName());
                     pendingRewards.add(player.getName(), response.getItems());
+                    // Player thoát giữa chừng: web đã atomic claim → vẫn ghi audit + history.
+                    audit.logRedeemOk(player.getName(), code, response.getItems(), "offline->pending");
+                    redeemHistory.add(player.getName(), code, response.getItems());
                 }
                 plugin.getLogger().info("Player " + player.getName() + " offline khi redeem " + code);
                 return;
@@ -107,6 +120,7 @@ public class GiftCodeManager {
             }
             if (response == null) {
                 // 2xx nhưng body rỗng — coi như lỗi, không trao đồ, code vẫn unused.
+                audit.logRedeemFail(player.getName(), code, "empty-200-body");
                 plugin.getLogger().warning("Redeem trả về 2xx nhưng body rỗng: " + code);
                 Chat.send(player, config.prefix(), "&cCó lỗi xảy ra khi xác nhận mã. Thử lại sau ít phút.");
                 return;
@@ -122,6 +136,9 @@ public class GiftCodeManager {
                         "&eMột số phần thưởng chưa trao được, sẽ tự động nhận khi bạn vào lại server.");
             }
             Chat.send(player, config.prefix(), config.msgRedeemSuccess());
+            audit.logRedeemOk(player.getName(), code, response.getItems(),
+                    "order=" + (response.getOrderCode() == null ? "-" : response.getOrderCode()));
+            redeemHistory.add(player.getName(), code, response.getItems());
             plugin.getLogger().info(
                     "Giftcode redeemed: " + code + " by " + player.getName()
                             + " items=" + response.getItems());
@@ -132,19 +149,23 @@ public class GiftCodeManager {
         if (err instanceof ApiException apiErr) {
             if (apiErr.isAlreadyUsed()) {
                 // Website xác nhận mã đã dùng (hoặc đơn bị từ chối) → cache lại.
+                audit.logRedeemAlreadyUsed(player.getName(), code);
                 usedCache.markUsed(code, player.getName());
                 Chat.send(player, config.prefix(), config.msgAlreadyUsed());
                 return;
             }
             if (apiErr.isNotFound()) {
+                audit.logRedeemInvalid(player.getName(), code, "not-found");
                 Chat.send(player, config.prefix(), config.msgInvalidCode());
                 return;
             }
+            audit.logRedeemFail(player.getName(), code, "http-" + apiErr.getStatusCode());
             plugin.getLogger().log(Level.WARNING,
                     "Redeem thất bại code=" + code + " player=" + player.getName(), apiErr);
             Chat.send(player, config.prefix(), "&cCó lỗi xảy ra khi xác nhận mã. Thử lại sau ít phút.");
             return;
         }
+        audit.logRedeemFail(player.getName(), code, "network:" + (err.getMessage() == null ? "?" : err.getMessage()));
         plugin.getLogger().log(Level.WARNING,
                 "Network lỗi khi redeem code=" + code + " player=" + player.getName(), err);
         Chat.send(player, config.prefix(), "&cKhông kết nối được server BanhmiVN. Thử lại sau.");
@@ -162,19 +183,25 @@ public class GiftCodeManager {
             return;
         }
         String code = generator.generate();
+        CodeItem item = new CodeItem(productType, productName, qty);
         CodeSyncRequest request = new CodeSyncRequest(
                 code, sender instanceof Player p ? p.getName() : null,
-                List.of(new CodeItem(productType, productName, qty)));
+                List.of(item));
+        audit.logGenerate(sender.getName(), code, List.of(item));
 
         api.syncCode(request).whenComplete((resp, err) ->
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     if (err != null) {
+                        audit.logSyncFail(code, err instanceof ApiException a
+                                ? "http-" + a.getStatusCode() + " " + a.getDetail()
+                                : "network:" + (err.getMessage() == null ? "?" : err.getMessage()));
                         plugin.getLogger().log(Level.WARNING, "Sync code thất bại: " + code, err);
                         Chat.send(sender, config.prefix(),
                                 "&cKhông đăng ký được code lên website: "
-                                        + (err instanceof ApiException a ? a.getDetail() : "lỗi mạng"));
+                                        + (err instanceof ApiException ae ? ae.getDetail() : "lỗi mạng"));
                         return;
                     }
+                    audit.logSyncOk(code, resp == null ? null : resp.getOrderId());
                     Chat.send(sender, config.prefix(),
                             "&aĐã tạo giftcode &f" + code
                                     + "&a (" + qty + "x " + productName + ") — đã đồng bộ lên website.");

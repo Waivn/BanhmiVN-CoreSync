@@ -9,6 +9,8 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
 import vn.banhmivn.coresync.api.ApiClient;
+import vn.banhmivn.coresync.audit.AuditLogger;
+import vn.banhmivn.coresync.history.RedeemHistory;
 import vn.banhmivn.coresync.api.dto.CodeItem;
 import vn.banhmivn.coresync.command.BmvnCommand;
 import vn.banhmivn.coresync.command.NhapCodeCommand;
@@ -37,6 +39,8 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
     private UsedCodeCache usedCache;
     private ItemBindingManager itemBinding;
     private PendingRewards pendingRewards;
+    private AuditLogger auditLogger;
+    private RedeemHistory redeemHistory;
     private RewardApplier rewardApplier;
     private GiftCodeManager giftCodeManager;
     private HeartbeatService heartbeat;
@@ -62,9 +66,11 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
         this.usedCache = new UsedCodeCache(this);
         this.itemBinding = new ItemBindingManager(this);
         this.pendingRewards = new PendingRewards(this);
+        this.auditLogger = new AuditLogger(this);
+        this.redeemHistory = new RedeemHistory(this);
         this.rewardApplier = new RewardApplier(this, config, itemBinding);
         this.giftCodeManager = new GiftCodeManager(this, config, api, generator, usedCache,
-                rewardApplier, pendingRewards);
+                rewardApplier, pendingRewards, auditLogger, redeemHistory);
         this.heartbeat = new HeartbeatService(this, config, api);
 
         registerCommands();
@@ -74,7 +80,9 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
         getLogger().info("BanhmiVN-CoreSync enabled. "
                 + "Used codes cached: " + usedCache.size()
                 + ", bound items: " + itemBinding.size()
-                + ", pending rewards: " + pendingRewards.all().size());
+                + ", pending rewards: " + pendingRewards.all().size()
+                + ", audit trail: " + auditLogger.file().getName()
+                + ", redeem history entries: " + redeemHistory.totalRecords());
     }
 
     @Override
@@ -123,7 +131,7 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
                 config.apiTimeoutSeconds());
         heartbeat = new HeartbeatService(this, config, api);
         giftCodeManager = new GiftCodeManager(this, config, api, generator, usedCache,
-                rewardApplier, pendingRewards);
+                rewardApplier, pendingRewards, auditLogger, redeemHistory);
         heartbeat.start();
         getLogger().info("Config reloaded.");
     }
@@ -177,6 +185,14 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
 
     public PendingRewards pendingRewards() {
         return pendingRewards;
+    }
+
+    public AuditLogger auditLogger() {
+        return auditLogger;
+    }
+
+    public RedeemHistory redeemHistory() {
+        return redeemHistory;
     }
 
     public GiftCodeManager giftCodeManager() {

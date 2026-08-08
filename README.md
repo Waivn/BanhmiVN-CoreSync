@@ -21,6 +21,7 @@ Minecraft Server ──► BanhmiVN.fun Backend (FastAPI)
 | 🏠 Claim blocks | Lệnh console chuẩn GriefPrevention: `adjustbonusclaimblocks <p> <amount>`. |
 | 📦 Bind item | `/bmvn binditem <key>` lưu **toàn bộ ItemMeta** (NBT, enchant, lore, display name) vào `items.yml`; trao khi redeem (rớt dưới chân nếu inventory đầy). |
 | 📡 Heartbeat 15s | Telemetry `state, player_count, max_players, tps, memory` lên `/api/server/status` — website render trạng thái realtime. |
+| 📜 Audit trail | Mọi sự kiện sinh/đổi giftcode ghi vào `audit.log` (append-only) + `redeem-history.yml` truy vấn theo player qua `/bmvn history`. |
 | 🔁 Pending rewards | Reward chưa trao được (offline / item chưa bind) lưu `pending-rewards.yml`, tự trao lại khi player vào server. |
 | 🛡️ An toàn | Toàn bộ HTTP **async** (Java `HttpClient`) — zero lag main thread. Cache `used-codes.yml` chống dùng lại. Group/giá trị đều được validate chống command injection. |
 
@@ -56,6 +57,7 @@ Minecraft Server ──► BanhmiVN.fun Backend (FastAPI)
 | `/bmvn listitems` | Danh sách key đã bind. |
 | `/bmvn giveitem <key> <player> [qty]` | Trao trực tiếp item đã bind. |
 | `/bmvn code <rank\|point\|land\|item\|crate> <value> [qty]` | Sinh giftcode + sync lên website. |
+| `/bmvn history <player>` | Lịch sử các mã giftcode player đã redeem (20 mã gần nhất). |
 | `/bmvn status` | Trạng thái heartbeat / số liệu. |
 | `/bmvn sync` | Đẩy heartbeat ngay. |
 | `/bmvn reload` | Nạp lại config. |
@@ -77,6 +79,14 @@ Ví dụ sinh code:
 | `point` | PlayerPoints API hoặc `p give` |
 | `land` | `adjustbonusclaimblocks <p> <qty>` |
 | `crate` / `item` | Trao item đã bind (`crate:<name>` hoặc `<name>`) |
+
+## Audit trail & lịch sử redeem
+
+- **`audit.log`** — file append-only trong thư mục plugin, ghi MỌI sự kiện kèm timestamp:
+  `REDEEM_OK` / `REDEEM_USED` / `REDEEM_INVALID` / `REDEEM_FAIL` / `GENERATE` / `SYNC_OK` / `SYNC_FAIL`
+  (player, code, items, chi tiết). Dùng để điều tra lạm dụng / khiếu nại.
+- **`redeem-history.yml`** — bản truy vấn nhanh theo player (tối đa 100 mã/player).
+  Xem qua `/bmvn history <player>`.
 
 ## Kiến trúc
 

@@ -7,7 +7,9 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import vn.banhmivn.coresync.api.dto.CodeItem;
+import vn.banhmivn.coresync.audit.AuditLogger;
 import vn.banhmivn.coresync.config.PluginConfig;
+import vn.banhmivn.coresync.history.RedeemHistory;
 import vn.banhmivn.coresync.giftcode.GiftCodeManager;
 import vn.banhmivn.coresync.heartbeat.HeartbeatService;
 import vn.banhmivn.coresync.item.ItemBindingManager;
@@ -28,6 +30,7 @@ import java.util.Optional;
  *   <li>{@code listitems} — danh sách key đã bind</li>
  *   <li>{@code giveitem <key> <player> [qty]} — trao trực tiếp item đã bind</li>
  *   <li>{@code code <rank|point|land|item|crate> <value> [qty]} — sinh giftcode + sync web</li>
+ *   <li>{@code history <player>} — lịch sử các mã player đã redeem</li>
  *   <li>{@code status} — trạng thái heartbeat/telemetry</li>
  *   <li>{@code sync} — đẩy heartbeat ngay lập tức</li>
  *   <li>{@code reload} — nạp lại config.yml</li>
@@ -68,6 +71,7 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
             case "listitems" -> listItems(sender);
             case "giveitem" -> giveItem(sender, args);
             case "code" -> generateCode(sender, args);
+            case "history" -> showHistory(sender, args);
             case "status" -> showStatus(sender);
             case "sync" -> {
                 heartbeat.tick();
@@ -200,6 +204,35 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    private void showHistory(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            Chat.send(sender, config.prefix(), "&cSử dụng: /bmvn history <player>");
+            return;
+        }
+        List<RedeemHistory.Record> records = plugin.redeemHistory().get(args[1]);
+        if (records.isEmpty()) {
+            Chat.send(sender, config.prefix(), "&7Chưa có lịch sử redeem nào cho &f" + args[1] + "&7.");
+            return;
+        }
+        Chat.send(sender, config.prefix(),
+                "&eLịch sử giftcode của &f" + args[1] + "&e (&f" + records.size() + "&e mã):");
+        int shown = 0;
+        java.text.SimpleDateFormat timeFmt = new java.text.SimpleDateFormat("dd/MM HH:mm");
+        for (RedeemHistory.Record rec : records) {
+            if (shown >= 20) {
+                sender.sendMessage(Chat.color(config.prefix()
+                        + "&7...và " + (records.size() - shown) + " mã cũ hơn (xem đầy đủ trong redeem-history.yml)."));
+                break;
+            }
+            sender.sendMessage(Chat.color(config.prefix()
+                    + "&7 - &f" + rec.code()
+                    + " &8(&7" + timeFmt.format(new java.util.Date(rec.at())) + "&8)"
+                    + " &e" + AuditLogger.itemsToString(rec.items())));
+            shown++;
+        }
+        sender.sendMessage(Chat.color(config.prefix() + "&7Trail đầy đủ: &f" + plugin.auditLogger().file().getName()));
+    }
+
     private void showStatus(CommandSender sender) {
         HeartbeatService.LastResult last = heartbeat.lastResult();
         Chat.send(sender, config.prefix(), "&e— BanhmiVN-CoreSync status —");
@@ -223,6 +256,7 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
                 "&7/bmvn listitems",
                 "&7/bmvn giveitem &f<key> <player> [qty]",
                 "&7/bmvn code &f<rank|point|land|item|crate> <value> [qty]",
+                "&7/bmvn history &f<player>",
                 "&7/bmvn status | sync | reload")) {
             sender.sendMessage(Chat.color(config.prefix() + line));
         }
@@ -253,7 +287,13 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 1) {
             return filter(List.of("binditem", "unbinditem", "listitems", "giveitem",
-                    "code", "status", "sync", "reload"), args[0]);
+                    "code", "history", "status", "sync", "reload"), args[0]);
+        }
+        if (args.length == 2 && "history".equalsIgnoreCase(args[0])) {
+            return Bukkit.getOnlinePlayers().stream()
+                    .map(Player::getName)
+                    .filter(n -> n.toLowerCase(Locale.ROOT).startsWith(args[1].toLowerCase(Locale.ROOT)))
+                    .toList();
         }
         if (args.length == 2) {
             switch (args[0].toLowerCase(Locale.ROOT)) {
