@@ -174,6 +174,17 @@ def main():
               and abs(resp.get("tps", 0) - 19.8) < 0.01)
         check("status read-back merged", ok, f"got {resp}")
 
+        # heartbeat_at phải được stamp mỗi lần plugin đẩy (dùng cho widget freshness)
+        hb = resp.get("heartbeat_at")
+        check("heartbeat_at stamped", isinstance(hb, (int, float)) and hb > 0, f"hb={hb}")
+        code, resp2 = request("POST", "/api/server/status", {
+            "status": "online", "player_count": 13, "tps": 19.9,
+        }, headers)
+        code, resp3 = request("GET", "/api/server/status")
+        hb2 = resp3.get("heartbeat_at")
+        check("heartbeat_at refreshes on push",
+              isinstance(hb2, (int, float)) and hb2 >= hb, f"hb={hb} hb2={hb2}")
+
         # maintenance state mapping (plugin maps CLOSED -> offline)
         code, resp = request("POST", "/api/server/status", {
             "status": "offline", "player_count": 0,
