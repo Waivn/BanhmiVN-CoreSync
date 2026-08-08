@@ -19,6 +19,9 @@ public class PendingCommandResponse {
     @SerializedName("file_b64")
     private String fileB64;
 
+    @SerializedName("created_at")
+    private String createdAt;
+
     public PendingCommandResponse() {
         // Gson
     }
@@ -33,5 +36,9 @@ public class PendingCommandResponse {
 
     public String getFileB64() {
         return fileB64;
+    }
+
+    public String getCreatedAt() {
+        return createdAt;
     }
 }

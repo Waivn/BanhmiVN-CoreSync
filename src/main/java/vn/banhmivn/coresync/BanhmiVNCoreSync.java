@@ -199,8 +199,10 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
      * @param auditEvent event ghi vào audit.log: {@code EXPORT} (lệnh) hoặc {@code AUTO_EXPORT} (tự động)
      * @param actor      tên người thực hiện (sender name) hoặc "scheduler" khi tự động
      * @param chat       sink gửi thông báo chat (nullable — auto-push không có CommandSender)
+     * @return tên file snapshot vừa xuất nếu thành công (đẩy web là fire-and-forget,
+     *         không ảnh hưởng kết quả này); {@code null} nếu tạo .tar.gz thất bại
      */
-    public void performSnapshotExport(String auditEvent, String actor, Consumer<String> chat) {
+    public String performSnapshotExport(String auditEvent, String actor, Consumer<String> chat) {
         try {
             File dataFolder = getDataFolder();
             AuditExporter exporter = new AuditExporter(getLogger());
@@ -229,9 +231,11 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
             }
             pushSnapshotToWebsite(chat, result.file());
             notify(chat, "&7Đường dẫn: &fplugins/BanhmiVN-CoreSync/exports/" + result.file().getName());
+            return result.file().getName();
         } catch (IOException ex) {
             getLogger().log(Level.SEVERE, "Xuất snapshot audit thất bại", ex);
             notify(chat, "&cXuất snapshot thất bại — xem log server.");
+            return null;
         }
     }
 
@@ -243,31 +247,29 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
      * @param fileName tên file .tar.gz trong thư mục {@code exports/}
      * @param actor    tên người thực hiện ({@code sender.getName()} hoặc {@code "web"})
      * @param chat     sink gửi thông báo chat (nullable — web-trigger không có CommandSender)
-     * @return kết quả khôi phục, hoặc {@code null} nếu lỗi IOException
+     * @return kết quả khôi phục
+     * @throws IOException archive hỏng/không phải snapshot plugin (không ghi gì) —
+     *                     caller log + báo người dùng (web-trigger dùng message này
+     *                     để ack kết quả thất bại)
      */
-    public AuditImporter.ImportResult performSnapshotImport(String fileName, String actor, Consumer<String> chat) {
-        try {
-            AuditImporter importer = new AuditImporter(getLogger());
-            AuditImporter.ImportResult result = importer.importSnapshot(getDataFolder(), fileName);
-            // Ghi dấu vết dù khôi phục được bao nhiêu file.
-            auditLogger.log("IMPORT", actor, "-", "",
-                    fileName + " restored=" + result.restored());
-            if (result.restored().isEmpty()) {
-                notify(chat, "&eSnapshot hợp lệ nhưng không chứa file trạng thái nào để khôi phục.");
-                return result;
-            }
-            // Disk đã ghi xong → nạp lại store để bộ nhớ khớp disk.
-            reloadStores();
-            notify(chat, "&aĐã khôi phục &f" + result.restored().size()
-                    + " &afile từ &f" + fileName + "&a — đã nạp lại bộ nhớ.");
-            getLogger().info("Snapshot import (" + actor + "): đã khôi phục "
-                    + result.restored().size() + " file từ " + fileName);
+    public AuditImporter.ImportResult performSnapshotImport(String fileName, String actor, Consumer<String> chat)
+            throws IOException {
+        AuditImporter importer = new AuditImporter(getLogger());
+        AuditImporter.ImportResult result = importer.importSnapshot(getDataFolder(), fileName);
+        // Ghi dấu vết dù khôi phục được bao nhiêu file.
+        auditLogger.log("IMPORT", actor, "-", "",
+                fileName + " restored=" + result.restored());
+        if (result.restored().isEmpty()) {
+            notify(chat, "&eSnapshot hợp lệ nhưng không chứa file trạng thái nào để khôi phục.");
             return result;
-        } catch (IOException ex) {
-            getLogger().log(Level.SEVERE, "Import snapshot thất bại: " + fileName, ex);
-            notify(chat, "&cKhôi phục thất bại: " + ex.getMessage());
-            return null;
         }
+        // Disk đã ghi xong → nạp lại store để bộ nhớ khớp disk.
+        reloadStores();
+        notify(chat, "&aĐã khôi phục &f" + result.restored().size()
+                + " &afile từ &f" + fileName + "&a — đã nạp lại bộ nhớ.");
+        getLogger().info("Snapshot import (" + actor + "): đã khôi phục "
+                + result.restored().size() + " file từ " + fileName);
+        return result;
     }
 
     /** Đẩy snapshot vừa xuất lên website cho staff tải (async — không chặn main). */

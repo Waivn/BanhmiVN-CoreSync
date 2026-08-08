@@ -128,6 +128,9 @@ Nén **toàn bộ trạng thái plugin** thành một file để bàn giao cho a
   `/bmvn exportaudit` trên main thread rồi ack (`POST /api/export/pending/ack`)
   — không cần console. Chỉ 1 lệnh chờ/server (409 nếu còn lệnh cũ), whitelist
   chỉ cho phép `exportaudit`; nút bấm với **mọi server** đã từng đẩy snapshot.
+  Mỗi lệnh ack kèm **kết quả** (`success`/`failed` + detail) → bảng snapshot
+  có cột **"Lệnh gần nhất"** ✓/✗/⏳; ack mang token `created_at` của lệnh nên
+  một ack cũ không bao giờ đè kết quả lên lệnh mới hơn (chống race).
 - Chạy đồng bộ trên main thread (đọc+gzip vài MB — nhanh, tránh tranh chấp với các store).
 
 ### Khôi phục snapshot (`/bmvn importaudit <file>`)
@@ -213,7 +216,7 @@ vn.banhmivn.coresync
 ## Build & test
 
 ```bash
-mvn package          # build jar + chạy 68 unit tests (payload, codegen, rank, alerts, export/import, multipart, crypto, auto-push, pending-command)
+mvn package          # build jar + chạy 69 unit tests (payload, codegen, rank, alerts, export/import, multipart, crypto, auto-push, pending-command)
 ```
 
 - Gson + Jakarta Mail được **shade + relocate** (`vn.banhmivn.libs.*`) — plugin tự
@@ -231,7 +234,8 @@ mvn package          # build jar + chạy 68 unit tests (payload, codegen, rank,
 | `GET /api/export/list` / `latest?server=` | — | admin JWT — danh sách / tải snapshot về |
 | `POST /api/export/run` | `{command?="exportaudit", server?}` | admin JWT — yêu cầu server chạy exportaudit (chỉ 1 lệnh chờ/server; 409 nếu còn lệnh) |
 | `GET /api/export/pending?server=` | — | X-API-Key — lệnh đang chờ của server (poll theo heartbeat, không tiêu thụ) |
-| `POST /api/export/pending/ack` | `{server}` | X-API-Key — xác nhận đã xử lý xong lệnh chờ (idempotent) |
+| `POST /api/export/pending/ack` | `{server, result?, detail?, created_at?}` | X-API-Key — xác nhận đã xử lý xong + KẾT QUẢ success/failed (idempotent; `created_at` = token chống ack cũ đè lệnh mới) |
+| `GET /api/export/commands` | — | admin JWT — lịch sử lệnh đã gửi theo server kèm kết quả ✓/✗ (cột "Lệnh gần nhất") |
 | `POST /api/export/import` | multipart: `server` + file `file` (.tar.gz) | admin JWT — upload snapshot để KHÔI PHỤC trên server (bản rõ gzip; 409 nếu còn lệnh chờ) |
 
 Auth: header `X-API-Key` (= `MC_API_KEY` trên website) cho upload; JWT admin cho download.

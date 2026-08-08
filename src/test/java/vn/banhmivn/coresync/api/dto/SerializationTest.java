@@ -138,6 +138,17 @@ class SerializationTest {
     }
 
     @Test
+    void pendingCommandCarriesCreatedAtToken() {
+        // created_at là token chống ack cũ đè lệnh mới — plugin echo lại khi ack.
+        String json = "{\"server\":\"main\",\"command\":\"exportaudit\","
+                + "\"created_at\":\"2026-08-08T10:00:00+00:00\"}";
+        PendingCommandResponse resp = GSON.fromJson(json, PendingCommandResponse.class);
+        assertEquals("2026-08-08T10:00:00+00:00", resp.getCreatedAt());
+        assertEquals(null, GSON.fromJson("{\"server\":\"main\",\"command\":null}",
+                PendingCommandResponse.class).getCreatedAt());
+    }
+
+    @Test
     void statusPayloadRoundTrips() {
         ServerStatusPayload payload = new ServerStatusPayload(
                 "maintenance", "Bảo trì", 0, 100, 20.0, null, 300L);

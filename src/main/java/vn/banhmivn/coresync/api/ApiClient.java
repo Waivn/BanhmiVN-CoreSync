@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -143,9 +144,24 @@ public class ApiClient {
                 .thenApply(response -> handle(response, PendingCommandResponse.class));
     }
 
-    /** Xác nhận plugin đã xử lý xong lệnh chờ (X-API-Key). */
-    public CompletableFuture<Void> ackPendingCommand(String serverId) {
-        return post("/api/export/pending/ack", java.util.Map.of("server", serverId), Object.class)
+    /**
+     * Xác nhận plugin đã xử lý xong lệnh chờ (X-API-Key), kèm KẾT QUẢ để website
+     * hiển thị ✓/✗ trên dashboard: {@code result} = "success" | "failed",
+     * {@code detail} = mô tả lỗi (rỗng khi thành công).
+     *
+     * @param token {@code created_at} của lệnh khi fetch — website chỉ ghi kết quả
+     *              nếu token khớp lệnh đang chờ, chống ack cũ đè lệnh mới
+     *              (race khi admin gửi lệnh mới giữa lúc plugin đang xử lý lệnh cũ)
+     */
+    public CompletableFuture<Void> ackPendingCommand(String serverId, String result, String detail, String token) {
+        Map<String, String> body = new java.util.HashMap<>();
+        body.put("server", serverId);
+        body.put("result", result == null || result.isBlank() ? "success" : result);
+        body.put("detail", detail == null ? "" : detail);
+        if (token != null && !token.isBlank()) {
+            body.put("created_at", token);
+        }
+        return post("/api/export/pending/ack", body, Object.class)
                 .thenApply(ignored -> null);
     }
 

@@ -111,35 +111,66 @@ public class HeartbeatService {
             // thread async này (không đụng Bukkit state) để tránh lag main thread với
             // snapshot lớn (tối đa 50MB). Chỉ import (đụng store) mới chạy main.
             String importFileName = null;
+            String importPrepError = null;
             if ("importaudit".equals(command)) {
                 try {
                     importFileName = writeWebImportFile(pending);
                 } catch (RuntimeException ex) {
+                    importPrepError = ex.getMessage();
                     plugin.getLogger().log(Level.WARNING,
-                            "Web lệnh 'importaudit' thất bại (chuẩn bị file): " + ex.getMessage());
+                            "Web lệnh 'importaudit' thất bại (chuẩn bị file): " + importPrepError);
                     // fileName giữ null → import được bỏ qua, lệnh vẫn được ack dưới đây.
                 }
             }
             final String fileName = importFileName;
+            final String prepError = importPrepError;
+            // Token chống ack cũ đè lệnh mới: website chỉ ghi kết quả khi created_at khớp.
+            final String token = pending == null ? null : pending.getCreatedAt();
             // Export/import đọc audit.log + store (AuditLogger cũng main thread) → phải chạy main.
             Bukkit.getScheduler().runTask(plugin, () -> {
+                // Ack kèm KẾT QUẢ (success/failed + detail) để dashboard hiện ✓/✗.
+                String ackResult = "success";
+                String ackDetail = "";
                 try {
                     if ("importaudit".equals(command)) {
                         if (fileName != null) {
-                            ((vn.banhmivn.coresync.BanhmiVNCoreSync) plugin)
-                                    .performSnapshotImport(fileName, "web", null);
+                            vn.banhmivn.coresync.export.AuditImporter.ImportResult importResult =
+                                    ((vn.banhmivn.coresync.BanhmiVNCoreSync) plugin)
+                                            .performSnapshotImport(fileName, "web", null);
+                            if (importResult.restored().isEmpty()) {
+                                // Hợp lệ nhưng không khôi phục được file nào → báo failed rõ ràng.
+                                ackResult = "failed";
+                                ackDetail = "Snapshot hợp lệ nhưng không chứa file trạng thái nào";
+                            } else {
+                                ackDetail = fileName + " (" + importResult.restored().size() + " file)";
+                            }
+                        } else {
+                            ackResult = "failed";
+                            ackDetail = prepError != null ? prepError : "Không nhận được snapshot từ web";
                         }
                     } else {
-                        ((vn.banhmivn.coresync.BanhmiVNCoreSync) plugin)
+                        String exported = ((vn.banhmivn.coresync.BanhmiVNCoreSync) plugin)
                                 .performSnapshotExport("WEB_EXPORT", "web", null);
+                        if (exported == null) {
+                            ackResult = "failed";
+                            ackDetail = "Xuất snapshot thất bại — xem log server";
+                        } else {
+                            ackDetail = exported;
+                        }
                     }
+                } catch (IOException ex) {
+                    // Import thất bại (archive hỏng/không phải snapshot plugin) — lấy message làm detail.
+                    ackResult = "failed";
+                    ackDetail = String.valueOf(ex.getMessage());
                 } catch (RuntimeException ex) {
                     // Lỗi ngoài ý muốn — log để ops biết; lệnh vẫn được ack để
                     // tránh retry-loop mỗi chu kỳ heartbeat (lỗi sẽ lặp lại).
+                    ackResult = "failed";
+                    ackDetail = String.valueOf(ex.getMessage());
                     plugin.getLogger().log(Level.WARNING,
                             "Web lệnh '" + command + "' thất bại: " + ex.getMessage(), ex);
                 } finally {
-                    api.ackPendingCommand(config.serverId()).exceptionally(ex -> {
+                    api.ackPendingCommand(config.serverId(), ackResult, ackDetail, token).exceptionally(ex -> {
                         plugin.getLogger().log(Level.FINE, "Ack lệnh chờ thất bại: " + ex.getMessage());
                         return null;
                     });

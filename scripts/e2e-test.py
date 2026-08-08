@@ -522,6 +522,69 @@ def main():
                                       admin_headers)
         check("import works again after ack", code == 200, f"got {code} {resp}")
 
+        # ── 11. Command results: ack kèm success/failed + detail → /api/export/commands ──
+        code, resp = request("GET", "/api/export/commands", headers=admin_headers)
+        items = resp if isinstance(resp, list) else []
+        main_cmd = next((c for c in items if c.get("server") == "main"), None)
+        ok = code == 200 and main_cmd and main_cmd.get("command") == "importaudit" \
+            and main_cmd.get("status") == "pending" and main_cmd.get("result") is None
+        check("commands lists pending command (result None)", ok, f"got {code} {main_cmd}")
+
+        code, resp = request("POST", "/api/export/pending/ack",
+                             {"server": "main", "result": "success", "detail": "ok"}, headers=up)
+        check("ack with result success", code == 200 and resp.get("ok") is True, f"got {code} {resp}")
+
+        # enc vẫn còn lệnh exportaudit pending từ section 9 → ack thất bại kèm detail
+        code, resp = request("POST", "/api/export/pending/ack",
+                             {"server": "enc", "result": "failed", "detail": "simulated failure"},
+                             headers=up)
+        check("ack with failed result", code == 200 and resp.get("ok") is True, f"got {code} {resp}")
+
+        code, resp = request("GET", "/api/export/commands", headers=admin_headers)
+        items = resp if isinstance(resp, list) else []
+        main_cmd = next((c for c in items if c.get("server") == "main"), None)
+        enc_cmd = next((c for c in items if c.get("server") == "enc"), None)
+        ok = (code == 200
+              and main_cmd and main_cmd.get("result") == "success" and main_cmd.get("status") == "done"
+              and enc_cmd and enc_cmd.get("result") == "failed"
+              and enc_cmd.get("detail") == "simulated failure")
+        check("commands shows success + failed with detail", ok,
+              f"got {code} main={main_cmd} enc={enc_cmd}")
+
+        code, resp = request("POST", "/api/export/pending/ack",
+                             {"server": "main", "result": "weird"}, headers=up)
+        check("ack invalid result -> 422", code == 422, f"got {code}")
+
+        code, resp = request("GET", "/api/export/commands")
+        check("commands no auth -> 401", code == 401, f"got {code}")
+
+        # Stale-ack guard: ack token cũ bị bỏ qua, lệnh mới vẫn pending
+        code, resp = multipart_upload("/api/export/import", {"server": "main"},
+                                      {"file": ("audit-snapshot-token.tar.gz", "application/gzip", import_snap)},
+                                      admin_headers)
+        check("import (token test) OK", code == 200, f"got {code}")
+        code, resp = request("GET", "/api/export/commands", headers=admin_headers)
+        items = resp if isinstance(resp, list) else []
+        main_cmd = next((c for c in items if c.get("server") == "main"), None)
+        token = (main_cmd or {}).get("created_at")
+        check("pending command has created_at token", bool(token), f"got {main_cmd}")
+        code, resp = request("POST", "/api/export/pending/ack",
+                             {"server": "main", "result": "success", "detail": "stale",
+                              "created_at": "2099-01-01T00:00:00+00:00"}, headers=up)
+        check("stale ack (wrong token) ignored", code == 200 and resp.get("ok") is True,
+              f"got {code} {resp}")
+        code, resp = request("GET", "/api/export/commands", headers=admin_headers)
+        items = resp if isinstance(resp, list) else []
+        main_cmd = next((c for c in items if c.get("server") == "main"), None)
+        check("command still pending after stale ack",
+              main_cmd and main_cmd.get("status") == "pending"
+              and main_cmd.get("result") is None, f"got {main_cmd}")
+        code, resp = request("POST", "/api/export/pending/ack",
+                             {"server": "main", "result": "success", "detail": "ok",
+                              "created_at": token}, headers=up)
+        check("ack with matching token applies", code == 200 and resp.get("ok") is True,
+              f"got {code} {resp}")
+
         print(f"\n===== E2E RESULT: {PASS} passed, {FAIL} failed =====")
         return 0 if FAIL == 0 else 1
     finally:

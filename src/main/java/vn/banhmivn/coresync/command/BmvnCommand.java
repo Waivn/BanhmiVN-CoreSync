@@ -271,11 +271,11 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
             }
 
             // Logic dùng chung với web-trigger (admin bấm nút khôi phục trên dashboard)
-            // — sống ở plugin class. Lỗi/rỗng đã có thông báo bên trong.
+            // — sống ở plugin class. IOException → catch ở ngoài báo lỗi.
             AuditImporter.ImportResult result = plugin.performSnapshotImport(args[1],
                     sender.getName(), s -> Chat.send(sender, config.prefix(), s));
-            if (result == null || result.restored().isEmpty()) {
-                return;
+            if (result.restored().isEmpty()) {
+                return; // rỗng — đã có thông báo bên trong
             }
             sender.sendMessage(Chat.color(config.prefix()
                     + "&7Đã khôi phục: &f" + String.join(", ", result.restored())));
