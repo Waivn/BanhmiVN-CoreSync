@@ -8,6 +8,7 @@ import vn.banhmivn.coresync.api.dto.CodeRedeemResponse;
 import vn.banhmivn.coresync.api.dto.CodeSyncRequest;
 import vn.banhmivn.coresync.api.dto.CodeSyncResponse;
 import vn.banhmivn.coresync.api.dto.ServerStatusPayload;
+import vn.banhmivn.coresync.export.SnapshotCipher;
 
 import java.io.File;
 import java.io.IOException;
@@ -72,18 +73,25 @@ public class ApiClient {
     /**
      * Đẩy snapshot audit (.tar.gz) lên {@code POST /api/export} cho staff tải về
      * (multipart/form-data: field {@code server} + file {@code file}).
+     *
+     * <p>Ghi chú: đọc file + mã hoá (vài chục ms với snapshot vài MB) chạy ngay
+     * trên thread gọi (main) trước khi sendAsync — phần HTTP mới là async.
+     *
+     * @param cipher mã hoá AES-256-GCM nội dung trước khi gửi (at-rest trên website);
+     *              {@code null} → gửi bản rõ (chỉ khi admin cố tình không cấu hình key).
      */
-    public CompletableFuture<Void> uploadSnapshot(File snapshot, String serverId) {
+    public CompletableFuture<Void> uploadSnapshot(File snapshot, String serverId, SnapshotCipher cipher) {
         if (!isConfigured()) {
             return CompletableFuture.failedFuture(
                     new ApiException(0, "MC_API_KEY chưa được cấu hình trên plugin (api.key rỗng)"));
         }
         try {
             byte[] content = Files.readAllBytes(snapshot.toPath());
+            byte[] uploaded = cipher == null ? content : cipher.encrypt(content);
             MultipartBody.Body body = MultipartBody.build(List.of(
                     new MultipartBody.Part("server", null, null,
                             serverId.getBytes(StandardCharsets.UTF_8)),
-                    new MultipartBody.Part("file", snapshot.getName(), "application/gzip", content)));
+                    new MultipartBody.Part("file", snapshot.getName(), "application/gzip", uploaded)));
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/api/export"))
@@ -101,6 +109,10 @@ public class ApiClient {
         } catch (IOException ex) {
             return CompletableFuture.failedFuture(
                     new ApiException(0, "Không đọc được snapshot: " + ex.getMessage()));
+        } catch (RuntimeException ex) {
+            // Mã hoá/Multipart lỗi → trả failedFuture thay vì throw sync (giữ hợp đồng async).
+            return CompletableFuture.failedFuture(
+                    new ApiException(0, "Chuẩn bị snapshot thất bại: " + ex.getMessage()));
         }
     }
 

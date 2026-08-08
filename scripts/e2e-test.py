@@ -9,6 +9,7 @@ on a local port, then exercises:
   GET  /api/server/status   (public read-back)
 No production data is touched. The temp DB is deleted afterwards.
 """
+import base64
 import json
 import os
 import sqlite3
@@ -17,6 +18,11 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+# Key mã hoá snapshot at-rest (khớp SNAPSHOT_ENCRYPTION_KEY khi boot web)
+ENC_KEY = base64.b64encode(bytes(range(32))).decode()
 
 WEBSITE = r"D:/Code/Website"
 PORT = 8899
@@ -105,6 +111,7 @@ def main():
         "ENABLE_DEV_LOGIN": "true",
         "DEBUG": "true",
         "ALLOWED_ORIGINS": "*",
+        "SNAPSHOT_ENCRYPTION_KEY": ENC_KEY,
     })
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
@@ -401,6 +408,33 @@ def main():
 
         code, data, hdrs = download("/api/export/latest")
         check("export latest no auth -> 401/403", code in (401, 403), f"got {code}")
+
+        # ── 8. Snapshot at-rest encryption: plugin mã hoá AES-GCM (magic||iv||ct||tag),
+        #       web lưu bản mã, giải mã khi staff tải về. Định dạng khớp plugin Java.
+        enc_magic = b"BMVNENC1"
+        plain_snap = _gzip.compress(b"secret audit payload\n" * 40)
+        iv = os.urandom(12)
+        ct = AESGCM(base64.b64decode(ENC_KEY)).encrypt(iv, plain_snap, None)
+        enc_blob = enc_magic + iv + ct
+
+        code, resp = multipart_upload("/api/export", {"server": "enc"},
+                                      {"file": ("audit-snapshot-enc.tar.gz", "application/gzip", enc_blob)}, up)
+        check("encrypted upload OK", code == 200, f"got {code}")
+
+        code, data, hdrs = download("/api/export/latest?server=enc", admin_headers)
+        check("encrypted download decrypts to original",
+              code == 200 and data == plain_snap, f"got {code} len={len(data)}")
+
+        # Tamper ciphertext (lật 1 bit) → GCM tag fail → 502
+        bad = bytearray(enc_blob)
+        bad[len(enc_magic) + 12 + 1] ^= 0x01
+        code, resp = multipart_upload("/api/export", {"server": "enc"},
+                                      {"file": ("audit-snapshot-tampered.tar.gz", "application/gzip", bytes(bad))}, up)
+        code, data, hdrs = download("/api/export/latest?server=enc", admin_headers)
+        check("tampered ciphertext -> 502", code == 502, f"got {code}")
+
+        # Web không có key → 503 (set lại settings khi chạy — E2E boot thật nên dùng
+        # trường hợp key đúng; case 503 đã có unit test test_snapshot_crypto.py)
 
         print(f"\n===== E2E RESULT: {PASS} passed, {FAIL} failed =====")
         return 0 if FAIL == 0 else 1

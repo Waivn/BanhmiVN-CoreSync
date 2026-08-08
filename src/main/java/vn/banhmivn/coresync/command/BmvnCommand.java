@@ -11,6 +11,7 @@ import vn.banhmivn.coresync.audit.AuditLogger;
 import vn.banhmivn.coresync.config.PluginConfig;
 import vn.banhmivn.coresync.export.AuditExporter;
 import vn.banhmivn.coresync.export.AuditImporter;
+import vn.banhmivn.coresync.export.SnapshotCipher;
 import vn.banhmivn.coresync.history.RedeemHistory;
 import vn.banhmivn.coresync.giftcode.GiftCodeManager;
 import vn.banhmivn.coresync.heartbeat.HeartbeatService;
@@ -328,8 +329,23 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
                     "&7Bỏ qua đẩy lên website (chưa cấu hình api.key).");
             return;
         }
-        plugin.apiClient().uploadSnapshot(snapshot, config.serverId())
-                .whenComplete((v, err) -> Bukkit.getScheduler().runTask(plugin, () -> {
+        // Mã hoá at-rest: nếu key cấu hình sai → KHÔNG đẩy (fail-loud, không downgrade bản rõ).
+        SnapshotCipher cipher = null;
+        String keyB64 = config.exportsEncryptionKey();
+        if (!keyB64.isBlank()) {
+            try {
+                cipher = SnapshotCipher.fromBase64(keyB64);
+            } catch (IllegalArgumentException ex) {
+                plugin.getLogger().warning("Bỏ qua đẩy snapshot: " + ex.getMessage());
+                Chat.send(sender, config.prefix(),
+                        "&cKhông đẩy snapshot lên website (key mã hoá không hợp lệ): " + ex.getMessage());
+                return;
+            }
+        }
+        final boolean encrypted = cipher != null;
+        try {
+            plugin.apiClient().uploadSnapshot(snapshot, config.serverId(), cipher)
+                    .whenComplete((v, err) -> Bukkit.getScheduler().runTask(plugin, () -> {
                     if (err != null) {
                         String detail = err instanceof java.io.IOException io
                                 ? io.getMessage()
@@ -340,9 +356,18 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
                                 "&cKhông đẩy được snapshot lên website (" + detail + ").");
                     } else {
                         Chat.send(sender, config.prefix(),
-                                "&aĐã đẩy snapshot lên website — staff tải về từ trang admin.");
+                                "&aĐã đẩy snapshot lên website"
+                                        + (encrypted ? " (mã hoá AES-256)" : " (KHÔNG mã hoá)")
+                                        + " — staff tải về từ trang admin.");
                     }
                 }));
+        } catch (RuntimeException ex) {
+            // Phòng thủ: nếu mã hoá/Multipart lỗi sync (không nên xảy ra sau khi ApiClient
+            // đã bọc failedFuture) — báo lỗi thay vì ném ra khỏi command.
+            plugin.getLogger().log(Level.WARNING, "Đẩy snapshot thất bại (sync): " + ex.getMessage());
+            Chat.send(sender, config.prefix(),
+                    "&cĐẩy snapshot lên website thất bại: " + ex.getMessage());
+        }
     }
 
     private void showStatus(CommandSender sender) {

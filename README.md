@@ -107,6 +107,14 @@ Nén **toàn bộ trạng thái plugin** thành một file để bàn giao cho a
 - **Đẩy lên website:** sau khi xuất, snapshot được POST lên `POST /api/export`
   (X-API-Key) cho staff tải về từ trang admin; tắt bằng
   `exports.push-to-website: false`.
+- **🔒 Mã hoá at-rest:** nếu đặt `exports.encryption-key` (base64 của 32 byte, sinh
+  bằng `openssl rand -base64 32`), snapshot được mã hoá **AES-256-GCM** trước khi
+  đẩy lên — website chỉ lưu bản mã hoá (`BMVNENC1 || IV || ciphertext || tag`),
+  giải mã khi staff tải về. Key phải **khớp** với biến môi trường
+  `SNAPSHOT_ENCRYPTION_KEY` trên website. GCM là authenticated encryption: key
+  sai hoặc dữ liệu bị sửa → tải về trả `502`. Để trống key → vẫn đẩy nhưng
+  KHÔNG mã hoá (kèm cảnh báo lúc reload). Snapshot cũ (bản rõ) tải về bình thường
+  (tự nhận diện qua magic, không cần cột DB mới).
 - Chạy đồng bộ trên main thread (đọc+gzip vài MB — nhanh, tránh tranh chấp với các store).
 
 ### Khôi phục snapshot (`/bmvn importaudit <file>`)
@@ -184,7 +192,7 @@ vn.banhmivn.coresync
 ## Build & test
 
 ```bash
-mvn package          # build jar + chạy 55 unit tests (payload, codegen, rank, alerts, export/import, multipart)
+mvn package          # build jar + chạy 63 unit tests (payload, codegen, rank, alerts, export/import, multipart, crypto)
 ```
 
 - Gson + Jakarta Mail được **shade + relocate** (`vn.banhmivn.libs.*`) — plugin tự
@@ -198,7 +206,7 @@ mvn package          # build jar + chạy 55 unit tests (payload, codegen, rank,
 | `POST /api/codes/redeem` | `{code, player_name?, ign?}` | 200 → items; 404 invalid; 409 used; 410 rejected |
 | `POST /api/codes/sync` | `{code, player_name?, items:[{product_type, product_name, qty}]}` | đăng ký code plugin sinh; 409 trùng |
 | `POST /api/server/status` | `{status?, message?, player_count?, max_players?, tps?, ping?}` | merge — chỉ field gửi mới đè |
-| `POST /api/export` | multipart: `server` + file `file` (.tar.gz) | đẩy snapshot audit — giữ bản mới nhất/server |
+| `POST /api/export` | multipart: `server` + file `file` (.tar.gz) | đẩy snapshot audit — giữ bản mới nhất/server; nhận cả blob mã hoá AES-GCM |
 | `GET /api/export/list` / `latest?server=` | — | admin JWT — danh sách / tải snapshot về |
 
 Auth: header `X-API-Key` (= `MC_API_KEY` trên website) cho upload; JWT admin cho download.

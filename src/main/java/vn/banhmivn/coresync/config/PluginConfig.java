@@ -35,6 +35,7 @@ public class PluginConfig {
 
     private int exportsRetentionDays;
     private boolean pushSnapshotsToWebsite;
+    private String exportsEncryptionKey;
 
     private boolean alertsEnabled;
     private String discordWebhookUrl;
@@ -73,6 +74,12 @@ public class PluginConfig {
 
         exportsRetentionDays = Math.max(0, cfg.getInt("exports.retention-days", 30));
         pushSnapshotsToWebsite = cfg.getBoolean("exports.push-to-website", true);
+        exportsEncryptionKey = cfg.getString("exports.encryption-key", "").trim();
+        if (pushSnapshotsToWebsite && exportsEncryptionKey.isEmpty()) {
+            plugin.getLogger().warning(
+                    "exports.encryption-key chưa cấu hình — snapshot đẩy lên website sẽ KHÔNG được mã hoá. "
+                            + "Đặt cùng giá trị base64 với SNAPSHOT_ENCRYPTION_KEY trên website để mã hoá at-rest.");
+        }
 
         alertsEnabled = cfg.getBoolean("alerts.enabled", true);
         discordWebhookUrl = cfg.getString("alerts.discord-webhook-url", "").trim();
@@ -202,6 +209,14 @@ public class PluginConfig {
     /** Đẩy snapshot lên website (POST /api/export) sau khi xuất. */
     public boolean pushSnapshotsToWebsite() {
         return pushSnapshotsToWebsite;
+    }
+
+    /**
+     * Key mã hoá AES-256 (base64) cho snapshot đẩy lên website.
+     * Rỗng = gửi bản rõ (cảnh báo khi bật push-to-website).
+     */
+    public String exportsEncryptionKey() {
+        return exportsEncryptionKey;
     }
 
     public boolean alertsEnabled() {

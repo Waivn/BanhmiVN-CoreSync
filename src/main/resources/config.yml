@@ -59,6 +59,12 @@ exports:
   # Sau khi xuất, đẩy snapshot .tar.gz lên website (POST /api/export, X-API-Key)
   # để staff tải về từ trang admin ở bất kỳ đâu. Cần api.key đã cấu hình.
   push-to-website: true
+  # Mã hoá AES-256-GCM snapshot trước khi đẩy lên website (encrypt at-rest):
+  # website chỉ lưu bản mã hoá, giải mã khi staff tải về.
+  # Giá trị = base64 của 32 byte, PHẢI khớp với SNAPSHOT_ENCRYPTION_KEY trên website.
+  # Tạo key mới:  openssl rand -base64 32
+  # Để trống → vẫn đẩy nhưng KHÔNG mã hoá (kèm cảnh báo khi bật push-to-website).
+  encryption-key: ""
 
 alerts:
   # Cảnh báo staff khi phát hiện hành vi đáng ngờ trong audit stream
