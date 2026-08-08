@@ -22,6 +22,13 @@ public class PendingCommandResponse {
     @SerializedName("created_at")
     private String createdAt;
 
+    /** HMAC-SHA256 của lệnh (chống giả mạo khi MC_API_KEY lộ); null khi web chưa cấu hình secret. */
+    private String sig;
+
+    /** Người yêu cầu lệnh trên dashboard (email admin) — ghi vào audit trail. */
+    @SerializedName("requested_by")
+    private String requestedBy;
+
     public PendingCommandResponse() {
         // Gson
     }
@@ -40,5 +47,13 @@ public class PendingCommandResponse {
 
     public String getCreatedAt() {
         return createdAt;
+    }
+
+    public String getSig() {
+        return sig;
+    }
+
+    public String getRequestedBy() {
+        return requestedBy;
     }
 }

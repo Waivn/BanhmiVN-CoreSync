@@ -37,6 +37,7 @@ public class PluginConfig {
     private boolean pushSnapshotsToWebsite;
     private int exportsAutoPushIntervalHours;
     private String exportsEncryptionKey;
+    private String exportsCommandHmacKey;
 
     private boolean alertsEnabled;
     private String discordWebhookUrl;
@@ -77,10 +78,17 @@ public class PluginConfig {
         pushSnapshotsToWebsite = cfg.getBoolean("exports.push-to-website", true);
         exportsAutoPushIntervalHours = Math.max(0, cfg.getInt("exports.auto-push-interval-hours", 6));
         exportsEncryptionKey = cfg.getString("exports.encryption-key", "").trim();
+        exportsCommandHmacKey = cfg.getString("exports.command-hmac-key", "").trim();
         if (pushSnapshotsToWebsite && exportsEncryptionKey.isEmpty()) {
             plugin.getLogger().warning(
                     "exports.encryption-key chưa cấu hình — snapshot đẩy lên website sẽ KHÔNG được mã hoá. "
                             + "Đặt cùng giá trị base64 với SNAPSHOT_ENCRYPTION_KEY trên website để mã hoá at-rest.");
+        }
+        if (pushSnapshotsToWebsite && exportsCommandHmacKey.isEmpty() && exportsEncryptionKey.isEmpty()) {
+            plugin.getLogger().warning(
+                    "KHÔNG có secret nào cấu hình (exports.command-hmac-key hoặc exports.encryption-key) — "
+                            + "kênh lệnh từ web (exportaudit/importaudit) KHÔNG có chữ ký HMAC. Kẻ lộ "
+                            + "MC_API_KEY có thể giả mạo lệnh; cấu hình secret để khoá nguồn.");
         }
 
         alertsEnabled = cfg.getBoolean("alerts.enabled", true);
@@ -219,6 +227,15 @@ public class PluginConfig {
      */
     public String exportsEncryptionKey() {
         return exportsEncryptionKey;
+    }
+
+    /**
+     * Khoá HMAC ký lệnh từ web (exports.command-hmac-key), mặc định tái dùng
+     * exports.encryption-key (32 byte đã chia sẻ với website) để khỏi cấu hình
+     * thêm. Rỗng → kênh lệnh không ký (legacy, có cảnh báo lúc reload).
+     */
+    public String commandHmacKey() {
+        return exportsCommandHmacKey.isEmpty() ? exportsEncryptionKey : exportsCommandHmacKey;
     }
 
     /**

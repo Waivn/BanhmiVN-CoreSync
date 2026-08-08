@@ -107,6 +107,46 @@ public class HeartbeatService {
             if (!isSupportedCommand(command)) {
                 return; // null hoặc lệnh không được hỗ trợ — bỏ qua an toàn
             }
+            // Xác thực chữ ký HMAC trước khi làm bất cứ điều gì: nếu plugin đã cấu
+            // hình secret mà lệnh thiếu/sai chữ ký → từ chối (fail-closed), kẻ lộ
+            // MC_API_KEY không giả mạo được lệnh.
+            String hmacB64 = config.commandHmacKey();
+            boolean signed = true;
+            String rejectReason = null;
+            if (!hmacB64.isBlank()) {
+                try {
+                    byte[] hmacKey = vn.banhmivn.coresync.export.CommandHmac.keyFromBase64(hmacB64);
+                    if (pending.getSig() == null || pending.getSig().isBlank()) {
+                        // Website chưa gửi chữ ký (chưa cấu hình secret) — khác hẳn chữ ký sai.
+                        signed = false;
+                        rejectReason = "Website chưa gửi chữ ký HMAC (chưa cấu hình secret trên website?)";
+                    } else if (!vn.banhmivn.coresync.export.CommandHmac.verify(
+                            hmacKey, pending.getServer(), command,
+                            pending.getCreatedAt(), pending.getFileB64(),
+                            pending.getRequestedBy(), pending.getSig())) {
+                        signed = false;
+                        rejectReason = "Chữ ký HMAC không khớp (secret giữa plugin và website khác nhau?)";
+                    }
+                } catch (IllegalArgumentException ex) {
+                    plugin.getLogger().warning("Khoá HMAC lệnh web không hợp lệ: " + ex.getMessage());
+                    signed = false;
+                    rejectReason = "Khoá HMAC cấu hình không hợp lệ trên plugin";
+                }
+            }
+            if (!signed) {
+                plugin.getLogger().warning("Từ chối lệnh web '" + command + "': " + rejectReason);
+                // Ack failed để website hiện ✗ + không retry-loop lệnh giả.
+                api.ackPendingCommand(config.serverId(), "failed", rejectReason,
+                        pending.getCreatedAt()).exceptionally(ex -> {
+                    plugin.getLogger().log(Level.FINE, "Ack từ chối lệnh thất bại: " + ex.getMessage());
+                    return null;
+                });
+                return;
+            }
+            // Actor ghi vào audit.log = người yêu cầu trên dashboard (email admin),
+            // fallback "web" nếu website cũ chưa gửi.
+            final String webActor = pending.getRequestedBy() == null || pending.getRequestedBy().isBlank()
+                    ? "web" : pending.getRequestedBy();
             // "importaudit": giải mã base64 + ghi file là thuần I/O — làm ngay trên
             // thread async này (không đụng Bukkit state) để tránh lag main thread với
             // snapshot lớn (tối đa 50MB). Chỉ import (đụng store) mới chạy main.
@@ -125,7 +165,7 @@ public class HeartbeatService {
             final String fileName = importFileName;
             final String prepError = importPrepError;
             // Token chống ack cũ đè lệnh mới: website chỉ ghi kết quả khi created_at khớp.
-            final String token = pending == null ? null : pending.getCreatedAt();
+            final String token = pending.getCreatedAt();
             // Export/import đọc audit.log + store (AuditLogger cũng main thread) → phải chạy main.
             Bukkit.getScheduler().runTask(plugin, () -> {
                 // Ack kèm KẾT QUẢ (success/failed + detail) để dashboard hiện ✓/✗.
@@ -136,7 +176,7 @@ public class HeartbeatService {
                         if (fileName != null) {
                             vn.banhmivn.coresync.export.AuditImporter.ImportResult importResult =
                                     ((vn.banhmivn.coresync.BanhmiVNCoreSync) plugin)
-                                            .performSnapshotImport(fileName, "web", null);
+                                            .performSnapshotImport(fileName, webActor, null);
                             if (importResult.restored().isEmpty()) {
                                 // Hợp lệ nhưng không khôi phục được file nào → báo failed rõ ràng.
                                 ackResult = "failed";
@@ -150,7 +190,7 @@ public class HeartbeatService {
                         }
                     } else {
                         String exported = ((vn.banhmivn.coresync.BanhmiVNCoreSync) plugin)
-                                .performSnapshotExport("WEB_EXPORT", "web", null);
+                                .performSnapshotExport("WEB_EXPORT", webActor, null);
                         if (exported == null) {
                             ackResult = "failed";
                             ackDetail = "Xuất snapshot thất bại — xem log server";

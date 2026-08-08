@@ -69,6 +69,11 @@ exports:
   # Tạo key mới:  openssl rand -base64 32
   # Để trống → vẫn đẩy nhưng KHÔNG mã hoá (kèm cảnh báo khi bật push-to-website).
   encryption-key: ""
+  # Khoá HMAC-SHA256 ký lệnh từ web (exportaudit/importaudit) — chống giả mạo
+  # khi MC_API_KEY bị lộ. Base64 của >= 16 byte (sinh: openssl rand -base64 32),
+  # PHẢI khớp COMMAND_HMAC_KEY trên website. Để trống → tái dùng encryption-key;
+  # cả hai rỗng → kênh lệnh KHÔNG ký (legacy, kèm cảnh báo lúc reload).
+  command-hmac-key: ""
 
 alerts:
   # Cảnh báo staff khi phát hiện hành vi đáng ngờ trong audit stream

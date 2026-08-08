@@ -585,6 +585,33 @@ def main():
         check("ack with matching token applies", code == 200 and resp.get("ok") is True,
               f"got {code} {resp}")
 
+        # ── 12. HMAC signing: lệnh được ký + requested_by (định danh admin) ──
+        code, resp = request("POST", "/api/export/run", {}, headers=admin_headers)
+        check("run (hmac test) OK", code == 200, f"got {code} {resp}")
+        code, resp = request("GET", "/api/export/pending?server=main", headers=up)
+        data = resp if isinstance(resp, dict) else {}
+        sig = data.get("sig")
+        created = data.get("created_at")
+        check("pending carries sig + requested_by (admin email)",
+              code == 200 and bool(sig) and data.get("requested_by") == "e2e@banhmivn.fun",
+              f"got {code} {data}")
+
+        # E2E boot không đặt COMMAND_HMAC_KEY → website fallback sang
+        # SNAPSHOT_ENCRYPTION_KEY (ENC_KEY) — verify chữ ký độc lập tại đây.
+        import hashlib as _hash2, hmac as _hmac2
+        canonical = f"main\nexportaudit\n{created}\n\ne2e@banhmivn.fun"
+        expected = base64.b64encode(
+            _hmac2.new(base64.b64decode(ENC_KEY), canonical.encode(), _hash2.sha256).digest()
+        ).decode()
+        check("sig verifies with snapshot-key fallback", sig == expected, f"sig={sig}")
+        canonical_bad = f"main\nshutdown\n{created}\n\ne2e@banhmivn.fun"
+        bad = base64.b64encode(
+            _hmac2.new(base64.b64decode(ENC_KEY), canonical_bad.encode(), _hash2.sha256).digest()
+        ).decode()
+        check("tampered command yields different sig", bad != sig, "")
+        code, resp = request("POST", "/api/export/pending/ack", {"server": "main"}, headers=up)
+        check("cleanup ack OK", code == 200, f"got {code} {resp}")
+
         print(f"\n===== E2E RESULT: {PASS} passed, {FAIL} failed =====")
         return 0 if FAIL == 0 else 1
     finally:

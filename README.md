@@ -131,6 +131,15 @@ Nén **toàn bộ trạng thái plugin** thành một file để bàn giao cho a
   Mỗi lệnh ack kèm **kết quả** (`success`/`failed` + detail) → bảng snapshot
   có cột **"Lệnh gần nhất"** ✓/✗/⏳; ack mang token `created_at` của lệnh nên
   một ack cũ không bao giờ đè kết quả lên lệnh mới hơn (chống race).
+- **🔑 Chữ ký HMAC + định danh người yêu cầu:** mỗi lệnh từ web được ký
+  `HMAC-SHA256` (canonical `server\ncommand\ncreated_at\nfile_b64\nrequested_by`)
+  bằng secret chia sẻ — website dùng `COMMAND_HMAC_KEY`, plugin dùng
+  `exports.command-hmac-key` (đều mặc định tái dùng `SNAPSHOT_ENCRYPTION_KEY` /
+  `exports.encryption-key`). Kẻ lộ `MC_API_KEY` hoặc sửa DB không giả mạo được
+  lệnh: chữ ký thiếu/sai → plugin **từ chối** (fail-closed) và ack ✗ rõ lý do.
+  `requested_by` (email admin) nằm trong vùng ký nên không đổi được, và được
+  ghi vào `audit.log` thay cho "web" — ai bấm nút sẽ để lại dấu vết. Khuyến
+  nghị dùng một **key riêng** cho HMAC thay vì tái dùng key mã hoá.
 - Chạy đồng bộ trên main thread (đọc+gzip vài MB — nhanh, tránh tranh chấp với các store).
 
 ### Khôi phục snapshot (`/bmvn importaudit <file>`)
@@ -216,7 +225,7 @@ vn.banhmivn.coresync
 ## Build & test
 
 ```bash
-mvn package          # build jar + chạy 69 unit tests (payload, codegen, rank, alerts, export/import, multipart, crypto, auto-push, pending-command)
+mvn package          # build jar + chạy 75 unit tests (payload, codegen, rank, alerts, export/import, multipart, crypto, auto-push, pending-command, command-hmac)
 ```
 
 - Gson + Jakarta Mail được **shade + relocate** (`vn.banhmivn.libs.*`) — plugin tự
@@ -233,7 +242,7 @@ mvn package          # build jar + chạy 69 unit tests (payload, codegen, rank,
 | `POST /api/export` | multipart: `server` + file `file` (.tar.gz) | đẩy snapshot audit — giữ bản mới nhất/server; nhận cả blob mã hoá AES-GCM |
 | `GET /api/export/list` / `latest?server=` | — | admin JWT — danh sách / tải snapshot về |
 | `POST /api/export/run` | `{command?="exportaudit", server?}` | admin JWT — yêu cầu server chạy exportaudit (chỉ 1 lệnh chờ/server; 409 nếu còn lệnh) |
-| `GET /api/export/pending?server=` | — | X-API-Key — lệnh đang chờ của server (poll theo heartbeat, không tiêu thụ) |
+| `GET /api/export/pending?server=` | — | X-API-Key — lệnh đang chờ kèm `sig` (HMAC), `requested_by`, `created_at` (poll theo heartbeat, không tiêu thụ) |
 | `POST /api/export/pending/ack` | `{server, result?, detail?, created_at?}` | X-API-Key — xác nhận đã xử lý xong + KẾT QUẢ success/failed (idempotent; `created_at` = token chống ack cũ đè lệnh mới) |
 | `GET /api/export/commands` | — | admin JWT — lịch sử lệnh đã gửi theo server kèm kết quả ✓/✗ (cột "Lệnh gần nhất") |
 | `POST /api/export/import` | multipart: `server` + file `file` (.tar.gz) | admin JWT — upload snapshot để KHÔI PHỤC trên server (bản rõ gzip; 409 nếu còn lệnh chờ) |
