@@ -222,9 +222,9 @@ public final class BanhmiVNCoreSync extends JavaPlugin implements Listener {
             notify(chat, "&aĐã xuất snapshot audit: &f" + result.file().getName()
                     + " &a(" + kb + " KB, " + result.entries() + " file)" + prunedNote);
             if (chat == null) {
-                // Auto-push không có CommandSender → ghi console để ops xác nhận scheduler chạy.
-                getLogger().info("Auto-push: đã xuất snapshot " + result.file().getName()
-                        + " (" + kb + " KB, " + result.entries() + " file, " + auditEvent + ")");
+                // Không có CommandSender (auto-push / web-trigger) → ghi console để ops theo dõi.
+                getLogger().info("Snapshot export (" + auditEvent + ", " + actor + "): đã xuất "
+                        + result.file().getName() + " (" + kb + " KB, " + result.entries() + " file)");
             }
             pushSnapshotToWebsite(chat, result.file());
             notify(chat, "&7Đường dẫn: &fplugins/BanhmiVN-CoreSync/exports/" + result.file().getName());

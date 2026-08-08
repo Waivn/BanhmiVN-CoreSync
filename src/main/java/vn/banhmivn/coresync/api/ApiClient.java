@@ -7,12 +7,14 @@ import vn.banhmivn.coresync.api.dto.CodeRedeemRequest;
 import vn.banhmivn.coresync.api.dto.CodeRedeemResponse;
 import vn.banhmivn.coresync.api.dto.CodeSyncRequest;
 import vn.banhmivn.coresync.api.dto.CodeSyncResponse;
+import vn.banhmivn.coresync.api.dto.PendingCommandResponse;
 import vn.banhmivn.coresync.api.dto.ServerStatusPayload;
 import vn.banhmivn.coresync.export.SnapshotCipher;
 
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -114,6 +116,32 @@ public class ApiClient {
             return CompletableFuture.failedFuture(
                     new ApiException(0, "Chuẩn bị snapshot thất bại: " + ex.getMessage()));
         }
+    }
+
+    /**
+     * Lấy lệnh đang chờ từ website cho server này (poll theo chu kỳ heartbeat).
+     * Trả {@code null} nếu không có lệnh nào (bình thường).
+     */
+    public CompletableFuture<String> fetchPendingCommand(String serverId) {
+        if (!isConfigured()) {
+            return CompletableFuture.failedFuture(
+                    new ApiException(0, "MC_API_KEY chưa được cấu hình trên plugin (api.key rỗng)"));
+        }
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/api/export/pending?server="
+                        + URLEncoder.encode(serverId, StandardCharsets.UTF_8)))
+                .timeout(timeout)
+                .header(apiKeyHeader, apiKey)
+                .GET()
+                .build();
+        return http.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+                .thenApply(response -> handle(response, PendingCommandResponse.class).getCommand());
+    }
+
+    /** Xác nhận plugin đã xử lý xong lệnh chờ (X-API-Key). */
+    public CompletableFuture<Void> ackPendingCommand(String serverId) {
+        return post("/api/export/pending/ack", java.util.Map.of("server", serverId), Object.class)
+                .thenApply(ignored -> null);
     }
 
     private <T> CompletableFuture<T> post(String path, Object body, Class<T> responseType) {

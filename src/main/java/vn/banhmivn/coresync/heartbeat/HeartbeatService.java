@@ -78,6 +78,43 @@ public class HeartbeatService {
                 } else {
                     failing.set(false);
                     lastResult = new LastResult(true, Instant.now(), "OK");
+                    // Website có thể yêu cầu server chạy /bmvn exportaudit (admin bấm
+                    // nút trên dashboard) — kéo lệnh chờ ngay trong luồng push có sẵn.
+                    checkPendingWebCommand();
+                }
+            });
+        });
+    }
+
+    /** Whitelist lệnh website được phép yêu cầu (không bao giờ chạy lệnh tuỳ ý). */
+    static boolean isSupportedCommand(String command) {
+        return "exportaudit".equals(command);
+    }
+
+    /** Poll lệnh chờ từ web; có lệnh exportaudit → chạy trên MAIN thread rồi ack. */
+    private void checkPendingWebCommand() {
+        api.fetchPendingCommand(config.serverId()).whenComplete((command, err) -> {
+            if (err != null) {
+                plugin.getLogger().log(Level.FINE, "Poll lệnh chờ từ web thất bại: " + err.getMessage());
+                return;
+            }
+            if (!isSupportedCommand(command)) {
+                return; // null hoặc lệnh không được hỗ trợ — bỏ qua an toàn
+            }
+            // Export đọc audit.log (AuditLogger cũng main thread) → phải chạy main.
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                try {
+                    ((vn.banhmivn.coresync.BanhmiVNCoreSync) plugin)
+                            .performSnapshotExport("WEB_EXPORT", "web", null);
+                } catch (RuntimeException ex) {
+                    // Lỗi ngoài ý muốn — log để ops biết; lệnh vẫn được ack để
+                    // tránh retry-loop mỗi chu kỳ heartbeat (lỗi sẽ lặp lại).
+                    plugin.getLogger().log(Level.WARNING, "Web export (WEB_EXPORT) thất bại: " + ex.getMessage(), ex);
+                } finally {
+                    api.ackPendingCommand(config.serverId()).exceptionally(ex -> {
+                        plugin.getLogger().log(Level.FINE, "Ack lệnh chờ thất bại: " + ex.getMessage());
+                        return null;
+                    });
                 }
             });
         });

@@ -122,6 +122,12 @@ Nén **toàn bộ trạng thái plugin** thành một file để bàn giao cho a
   sai hoặc dữ liệu bị sửa → tải về trả `502`. Để trống key → vẫn đẩy nhưng
   KHÔNG mã hoá (kèm cảnh báo lúc reload). Snapshot cũ (bản rõ) tải về bình thường
   (tự nhận diện qua magic, không cần cột DB mới).
+- **⚡ Kích hoạt từ website:** staff bấm nút **"⚡ Chạy exportaudit"** trên trang
+  admin → website ghi lệnh chờ (`pending_command:<server>`); plugin kéo lệnh qua
+  `GET /api/export/pending` ngay trong chu kỳ heartbeat có sẵn, chạy
+  `/bmvn exportaudit` trên main thread rồi ack (`POST /api/export/pending/ack`)
+  — không cần console. Chỉ 1 lệnh chờ/server (409 nếu còn lệnh cũ), whitelist
+  chỉ cho phép `exportaudit`; nút bấm với **mọi server** đã từng đẩy snapshot.
 - Chạy đồng bộ trên main thread (đọc+gzip vài MB — nhanh, tránh tranh chấp với các store).
 
 ### Khôi phục snapshot (`/bmvn importaudit <file>`)
@@ -199,7 +205,7 @@ vn.banhmivn.coresync
 ## Build & test
 
 ```bash
-mvn package          # build jar + chạy 65 unit tests (payload, codegen, rank, alerts, export/import, multipart, crypto, auto-push)
+mvn package          # build jar + chạy 67 unit tests (payload, codegen, rank, alerts, export/import, multipart, crypto, auto-push, pending-command)
 ```
 
 - Gson + Jakarta Mail được **shade + relocate** (`vn.banhmivn.libs.*`) — plugin tự
@@ -215,6 +221,9 @@ mvn package          # build jar + chạy 65 unit tests (payload, codegen, rank,
 | `POST /api/server/status` | `{status?, message?, player_count?, max_players?, tps?, ping?}` | merge — chỉ field gửi mới đè |
 | `POST /api/export` | multipart: `server` + file `file` (.tar.gz) | đẩy snapshot audit — giữ bản mới nhất/server; nhận cả blob mã hoá AES-GCM |
 | `GET /api/export/list` / `latest?server=` | — | admin JWT — danh sách / tải snapshot về |
+| `POST /api/export/run` | `{command?="exportaudit", server?}` | admin JWT — yêu cầu server chạy exportaudit (chỉ 1 lệnh chờ/server; 409 nếu còn lệnh) |
+| `GET /api/export/pending?server=` | — | X-API-Key — lệnh đang chờ của server (poll theo heartbeat, không tiêu thụ) |
+| `POST /api/export/pending/ack` | `{server}` | X-API-Key — xác nhận đã xử lý xong lệnh chờ (idempotent) |
 
 Auth: header `X-API-Key` (= `MC_API_KEY` trên website) cho upload; JWT admin cho download.
 Trạng thái web: `online | offline | maintenance | update`.

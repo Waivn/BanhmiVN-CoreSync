@@ -109,6 +109,20 @@ class SerializationTest {
         assertFalse(json.contains("\"ping\""), "ping null phải bị bỏ qua: " + json);
     }
 
+    // ── Deserialize: /api/export/pending response (web-triggered exportaudit) ──
+
+    @Test
+    void pendingCommandResponseParses() {
+        String withCommand = "{\"server\":\"main\",\"command\":\"exportaudit\"}";
+        PendingCommandResponse resp = GSON.fromJson(withCommand, PendingCommandResponse.class);
+        assertEquals("exportaudit", resp.getCommand());
+        assertEquals("main", resp.getServer());
+
+        String empty = "{\"server\":\"main\",\"command\":null}";
+        PendingCommandResponse none = GSON.fromJson(empty, PendingCommandResponse.class);
+        assertEquals(null, none.getCommand(), "không có lệnh chờ → command null");
+    }
+
     @Test
     void statusPayloadRoundTrips() {
         ServerStatusPayload payload = new ServerStatusPayload(

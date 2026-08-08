@@ -436,6 +436,50 @@ def main():
         # Web không có key → 503 (set lại settings khi chạy — E2E boot thật nên dùng
         # trường hợp key đúng; case 503 đã có unit test test_snapshot_crypto.py)
 
+        # ── 9. Web-triggered export: admin bấm 'Chạy exportaudit' → pending command
+        #       queue → plugin kéo qua heartbeat (GET /pending) rồi ack. ──
+        code, resp = request("POST", "/api/export/run", {}, headers=admin_headers)
+        requested = resp.get("requested", []) if isinstance(resp, dict) else []
+        ok = code == 200 and "main" in requested and resp.get("command") == "exportaudit"
+        check("export run request (admin) targets known servers", ok, f"got {code} {resp}")
+
+        code, resp = request("POST", "/api/export/run", {}, headers=admin_headers)
+        check("export run duplicate -> 409 (pending exists)", code == 409, f"got {code} {resp}")
+
+        # Plugin polls: lệnh đang chờ phải xuất hiện (không tiêu thụ khi GET)
+        code, resp = request("GET", "/api/export/pending?server=main", headers=up)
+        ok = code == 200 and resp.get("command") == "exportaudit"
+        check("pending poll returns command (X-API-Key)", ok, f"got {code} {resp}")
+
+        code, resp = request("GET", "/api/export/pending?server=ghost", headers=up)
+        check("pending poll unknown server -> empty",
+              code == 200 and resp.get("command") is None, f"got {code} {resp}")
+
+        code, resp = request("GET", "/api/export/pending?server=main")
+        check("pending poll no key -> 401", code == 401, f"got {code}")
+
+        # Plugin ack sau khi chạy xong → lệnh biến mất (poll lại = empty)
+        code, resp = request("POST", "/api/export/pending/ack", {"server": "main"}, headers=up)
+        check("pending ack OK", code == 200 and resp.get("ok") is True, f"got {code} {resp}")
+
+        code, resp = request("GET", "/api/export/pending?server=main", headers=up)
+        check("pending consumed after ack",
+              code == 200 and resp.get("command") is None, f"got {code} {resp}")
+
+        # ack idempotent (không có lệnh chờ → vẫn ok)
+        code, resp = request("POST", "/api/export/pending/ack", {"server": "main"}, headers=up)
+        check("pending ack idempotent", code == 200 and resp.get("ok") is True, f"got {code} {resp}")
+
+        # Non-admin không được phép yêu cầu export
+        code, resp = request("POST", "/api/export/run", {},
+                             headers={"Authorization": f"Bearer {u_login['access_token']}"})
+        check("export run non-admin -> 403", code == 403, f"got {code} {resp}")
+
+        # Whitelist lệnh: chỉ exportaudit được phép
+        code, resp = request("POST", "/api/export/run", {"command": "rm -rf /"},
+                             headers=admin_headers)
+        check("export run disallowed command -> 422", code == 422, f"got {code} {resp}")
+
         print(f"\n===== E2E RESULT: {PASS} passed, {FAIL} failed =====")
         return 0 if FAIL == 0 else 1
     finally:
