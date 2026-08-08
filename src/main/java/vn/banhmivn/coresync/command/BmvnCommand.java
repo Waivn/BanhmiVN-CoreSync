@@ -243,12 +243,15 @@ public class BmvnCommand implements CommandExecutor, TabCompleter {
         try {
             File dataFolder = plugin.getDataFolder();
             AuditExporter exporter = new AuditExporter(plugin.getLogger());
-            AuditExporter.SnapshotResult result = exporter.export(
-                    dataFolder,
+            AuditExporter.ExportSources sources = new AuditExporter.ExportSources(
                     new File(dataFolder, "audit.log"),
                     new File(dataFolder, "audit.log.1"),
                     new File(dataFolder, "redeem-history.yml"),
-                    config.serverName(),
+                    new File(dataFolder, "used-codes.yml"),
+                    new File(dataFolder, "pending-rewards.yml"),
+                    new File(dataFolder, "items.yml"));
+            AuditExporter.SnapshotResult result = exporter.export(
+                    dataFolder, sources, config.serverName(),
                     plugin.getDescription().getVersion());
             String kb = String.format(Locale.ROOT, "%.1f", result.bytes() / 1024.0);
             // Ghi dấu vết việc xuất snapshot vào chính audit.log

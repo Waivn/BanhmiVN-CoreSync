@@ -21,7 +21,7 @@ Minecraft Server ──► BanhmiVN.fun Backend (FastAPI)
 | 🏠 Claim blocks | Lệnh console chuẩn GriefPrevention: `adjustbonusclaimblocks <p> <amount>`. |
 | 📦 Bind item | `/bmvn binditem <key>` lưu **toàn bộ ItemMeta** (NBT, enchant, lore, display name) vào `items.yml`; trao khi redeem (rớt dưới chân nếu inventory đầy). |
 | 📡 Heartbeat 15s | Telemetry `state, player_count, max_players, tps, memory` lên `/api/server/status` — website render trạng thái realtime. |
-| 📜 Audit trail | Mọi sự kiện sinh/đổi giftcode ghi vào `audit.log` (append-only) + `redeem-history.yml` truy vấn theo player qua `/bmvn history`. `/bmvn exportaudit` nén cả hai thành snapshot `.tar.gz` bàn giao admin. |
+| 📜 Audit trail | Mọi sự kiện sinh/đổi giftcode ghi vào `audit.log` (append-only) + `redeem-history.yml` truy vấn theo player qua `/bmvn history`. `/bmvn exportaudit` nén **toàn bộ trạng thái plugin** thành snapshot `.tar.gz` bàn giao admin. |
 | 🚨 Staff alerts | Phát hiện hành vi đáng ngờ (vd brute-force nhập code: ≥5 `REDEEM_INVALID` trong 60s) → báo **Discord webhook** và/hoặc **email SMTP** cho staff. Ngưỡng/cửa sổ/cooldown cấu hình được. |
 | 🔁 Pending rewards | Reward chưa trao được (offline / item chưa bind) lưu `pending-rewards.yml`, tự trao lại khi player vào server. |
 | 🛡️ An toàn | Toàn bộ HTTP **async** (Java `HttpClient`) — zero lag main thread. Cache `used-codes.yml` chống dùng lại. Group/giá trị đều được validate chống command injection. |
@@ -59,7 +59,7 @@ Minecraft Server ──► BanhmiVN.fun Backend (FastAPI)
 | `/bmvn giveitem <key> <player> [qty]` | Trao trực tiếp item đã bind. |
 | `/bmvn code <rank\|point\|land\|item\|crate> <value> [qty]` | Sinh giftcode + sync lên website. |
 | `/bmvn history <player>` | Lịch sử các mã giftcode player đã redeem (20 mã gần nhất). |
-| `/bmvn exportaudit` | Nén `audit.log` (+ bản quay vòng) + `redeem-history.yml` thành snapshot `exports/audit-snapshot-<ts>.tar.gz` kèm `MANIFEST.txt`. |
+| `/bmvn exportaudit` | Nén toàn bộ trạng thái (audit, history, used-codes, pending-rewards, items) thành snapshot `exports/audit-snapshot-<ts>.tar.gz` kèm `MANIFEST.txt`. |
 | `/bmvn status` | Trạng thái heartbeat / số liệu. |
 | `/bmvn sync` | Đẩy heartbeat ngay. |
 | `/bmvn reload` | Nạp lại config. |
@@ -92,14 +92,16 @@ Ví dụ sinh code:
 
 ### Xuất snapshot (`/bmvn exportaudit`)
 
-Nén toàn bộ dấu vết thành một file để bàn giao cho admin/điều tra:
+Nén **toàn bộ trạng thái plugin** thành một file để bàn giao cho admin/điều tra:
 `plugins/BanhmiVN-CoreSync/exports/audit-snapshot-<YYYYMMDD-HHmmss>.tar.gz`
 (tar ustar qua gzip — giải nén bằng 7-Zip / WinRAR / `tar -xzf`).
 
 - Gồm: `MANIFEST.txt` (thời điểm xuất, server, version, size từng file),
-  `audit.log`, `audit-1.log` (bản đã quay vòng nếu có), `redeem-history.yml`.
+  `audit.log`, `audit-1.log` (bản đã quay vòng nếu có), `redeem-history.yml`,
+  `used-codes.yml` (mã đã dùng cục bộ), `pending-rewards.yml` (thưởng còn nợ),
+  `items.yml` (item đã bind). File nào chưa tồn tại sẽ được bỏ qua kèm cảnh báo.
 - Mỗi lần xuất được ghi một dòng `EXPORT` vào chính `audit.log`.
-- Chạy đồng bộ trên main thread (đọc+gzip vài MB — nhanh, tránh tranh chấp với AuditLogger).
+- Chạy đồng bộ trên main thread (đọc+gzip vài MB — nhanh, tránh tranh chấp với các store).
 
 ## Cảnh báo an ninh (Staff alerts)
 

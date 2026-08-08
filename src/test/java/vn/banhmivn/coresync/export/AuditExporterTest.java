@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.logging.Logger;
 import java.util.zip.GZIPInputStream;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -116,6 +115,30 @@ class AuditExporterTest {
         return new String(e.content(), StandardCharsets.UTF_8);
     }
 
+    /** Dựng toàn bộ 6 file nguồn trong thư mục tạm. */
+    private static void writeAllStateFiles(File dir) throws IOException {
+        Files.writeString(new File(dir, "audit.log").toPath(),
+                "[2026-08-08 10:00:00] REDEEM_OK player=Steve code=BMVN-AAAA-BBBB-CCCC\n");
+        Files.writeString(new File(dir, "redeem-history.yml").toPath(),
+                "history:\n  steve:\n    0:\n      code: BMVN-AAAA-BBBB-CCCC\n");
+        Files.writeString(new File(dir, "used-codes.yml").toPath(),
+                "used:\n  BMVN-AAAA-BBBB-CCCC:\n    player: Steve\n");
+        Files.writeString(new File(dir, "pending-rewards.yml").toPath(),
+                "pending:\n  notch:\n    0:\n      type: point\n");
+        Files.writeString(new File(dir, "items.yml").toPath(),
+                "items:\n  crate:premium:\n    item: rO0ABXNyAApCdWtr\n");
+    }
+
+    private static AuditExporter.ExportSources sources(File dir) {
+        return new AuditExporter.ExportSources(
+                new File(dir, "audit.log"),
+                new File(dir, "audit.log.1"),
+                new File(dir, "redeem-history.yml"),
+                new File(dir, "used-codes.yml"),
+                new File(dir, "pending-rewards.yml"),
+                new File(dir, "items.yml"));
+    }
+
     // ── Tests ───────────────────────────────────────────────
 
     @Test
@@ -135,37 +158,40 @@ class AuditExporterTest {
     }
 
     @Test
-    void exportCreatesGzippedSnapshotWithAllFiles() throws IOException {
-        File audit = new File(tmp, "audit.log");
-        File history = new File(tmp, "redeem-history.yml");
-        Files.writeString(audit.toPath(), "[2026-08-08 10:00:00] REDEEM_OK player=Steve code=BMVN-AAAA-BBBB-CCCC\n");
-        Files.writeString(history.toPath(), "history:\n  steve:\n    0:\n      code: BMVN-AAAA-BBBB-CCCC\n");
+    void exportCapturesFullPluginState() throws IOException {
+        writeAllStateFiles(tmp);
 
         AuditExporter.SnapshotResult result = new AuditExporter(LOG)
-                .export(tmp, audit, new File(tmp, "audit.log.1"), history, "Test Server", "1.0.0");
+                .export(tmp, sources(tmp), "Test Server", "1.0.0");
 
         assertTrue(result.file().getName().matches("audit-snapshot-\\d{8}-\\d{6}\\.tar\\.gz"),
                 result.file().getName());
         assertTrue(result.file().exists());
         assertTrue(result.bytes() > 0);
-        assertTrue(result.entries() >= 3);
 
         List<TarEntry> entries = readSnapshot(result.file());
-        assertEquals(3, entries.size());
-        TarEntry manifest = entries.stream().filter(e -> e.name().equals("MANIFEST.txt")).findFirst().orElseThrow();
-        TarEntry auditEntry = entries.stream().filter(e -> e.name().equals("audit.log")).findFirst().orElseThrow();
-        TarEntry histEntry = entries.stream().filter(e -> e.name().equals("redeem-history.yml")).findFirst().orElseThrow();
+        // MANIFEST.txt + 5 file trạng thái (audit.log.1 chưa tồn tại nên không có)
+        assertEquals(6, entries.size());
+        assertEquals(6, result.entries(), "counter dùng cho chat message / EXPORT line phải khớp");
 
-        assertEquals(Files.readString(audit.toPath()), text(auditEntry));
-        assertEquals(Files.readString(history.toPath()), text(histEntry));
-        String m = text(manifest);
+        for (String name : List.of("audit.log", "redeem-history.yml", "used-codes.yml",
+                "pending-rewards.yml", "items.yml")) {
+            TarEntry e = entries.stream().filter(x -> x.name().equals(name))
+                    .findFirst().orElseThrow(() -> new AssertionError("thiếu entry " + name));
+            assertEquals(Files.readString(new File(tmp, name).toPath()), text(e), name);
+        }
+        assertTrue(entries.stream().noneMatch(e -> e.name().equals("audit-1.log")));
+
+        String m = text(entries.stream().filter(e -> e.name().equals("MANIFEST.txt"))
+                .findFirst().orElseThrow());
         assertTrue(m.contains("Test Server"));
         assertTrue(m.contains("1.0.0"));
         // Danh sách file kèm size thực (chỉ xuất hiện trong phần liệt kê, không phải footer)
-        assertTrue(m.contains("audit.log"), m);
-        assertTrue(m.contains(audit.length() + " bytes"), m);
-        assertTrue(m.contains("redeem-history.yml"), m);
-        assertTrue(m.contains(history.length() + " bytes"), m);
+        for (String name : List.of("audit.log", "redeem-history.yml", "used-codes.yml",
+                "pending-rewards.yml", "items.yml")) {
+            long len = new File(tmp, name).length();
+            assertTrue(m.contains(name) && m.contains(len + " bytes"), name + " thiếu trong manifest");
+        }
     }
 
     @Test
@@ -176,7 +202,7 @@ class AuditExporterTest {
         Files.writeString(rotated.toPath(), "old-lines\n");
 
         AuditExporter.SnapshotResult result = new AuditExporter(LOG)
-                .export(tmp, audit, rotated, null, "S", "1.0.0");
+                .export(tmp, sources(tmp), "S", "1.0.0");
 
         List<TarEntry> entries = readSnapshot(result.file());
         assertTrue(entries.stream().anyMatch(e -> e.name().equals("audit-1.log")),
@@ -191,20 +217,20 @@ class AuditExporterTest {
         Files.writeString(audit.toPath(), "only-audit\n");
 
         AuditExporter.SnapshotResult result = new AuditExporter(LOG)
-                .export(tmp, audit, null, new File(tmp, "redeem-history.yml"), "S", "1.0.0");
+                .export(tmp, sources(tmp), "S", "1.0.0");
 
         List<TarEntry> entries = readSnapshot(result.file());
         assertEquals(2, entries.size()); // MANIFEST.txt + audit.log
         assertTrue(entries.stream().noneMatch(e -> e.name().equals("redeem-history.yml")));
+        assertTrue(entries.stream().noneMatch(e -> e.name().equals("items.yml")));
         assertEquals("only-audit\n", text(entries.stream()
                 .filter(e -> e.name().equals("audit.log")).findFirst().orElseThrow()));
     }
 
     @Test
     void exportsDirIsCreatedAndSnapshotIsValidGzip() throws IOException {
-        File audit = new File(tmp, "audit.log");
-        Files.writeString(audit.toPath(), "x\n");
-        new AuditExporter(LOG).export(tmp, audit, null, null, "S", "1.0.0");
+        writeAllStateFiles(tmp);
+        new AuditExporter(LOG).export(tmp, sources(tmp), "S", "1.0.0");
 
         File exportsDir = new File(tmp, "exports");
         assertTrue(exportsDir.isDirectory());
@@ -217,17 +243,15 @@ class AuditExporterTest {
     }
 
     @Test
-    void runningTwiceStillProducesReadableSnapshot() throws IOException {
-        File audit = new File(tmp, "audit.log");
-        Files.writeString(audit.toPath(), "data\n");
+    void snapshotContentSurvivesRepeatedExport() throws IOException {
+        writeAllStateFiles(tmp);
         AuditExporter exporter = new AuditExporter(LOG);
-        exporter.export(tmp, audit, null, null, "S", "1.0.0");
-        AuditExporter.SnapshotResult second = exporter.export(tmp, audit, null, null, "S", "1.0.0");
+        exporter.export(tmp, sources(tmp), "S", "1.0.0");
+        AuditExporter.SnapshotResult second = exporter.export(tmp, sources(tmp), "S", "1.0.0");
 
-        assertTrue(second.file().exists());
         List<TarEntry> entries = readSnapshot(second.file());
-        assertArrayEquals("data\n".getBytes(StandardCharsets.UTF_8),
-                entries.stream().filter(e -> e.name().equals("audit.log")).findFirst()
-                        .orElseThrow().content());
+        TarEntry auditEntry = entries.stream().filter(e -> e.name().equals("audit.log"))
+                .findFirst().orElseThrow();
+        assertEquals(Files.readString(new File(tmp, "audit.log").toPath()), text(auditEntry));
     }
 }

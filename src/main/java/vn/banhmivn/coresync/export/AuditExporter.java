@@ -10,17 +10,20 @@ import java.nio.file.StandardCopyOption;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.logging.Logger;
 import java.util.zip.GZIPOutputStream;
 
 /**
- * Xuất snapshot audit để bàn giao cho admin: nén {@code audit.log} (+ bản đã
- * quay vòng {@code audit.log.1} nếu có) và {@code redeem-history.yml} thành
+ * Xuất snapshot toàn bộ trạng thái plugin để bàn giao cho admin: nén
+ * {@code audit.log} (+ bản đã quay vòng {@code audit.log.1}), {@code redeem-history.yml},
+ * {@code used-codes.yml}, {@code pending-rewards.yml} và {@code items.yml} thành
  * một file {@code .tar.gz} duy nhất trong {@code exports/}.
  *
  * <p>Thuần Java (không phụ thuộc Bukkit) — unit-test được. Chạy trên main
  * thread: đọc/gzip vài MB log là việc nhanh (&lt; 200ms) và tránh mọi tranh
- * chấp đọc/ghi với AuditLogger (vốn cũng chạy main thread).
+ * chấp đọc/ghi với các store (vốn cũng chạy main thread).
  *
  * <p>Format: tar ustar (tương thích 7-Zip/WinRAR/tar) qua GZIP. Kèm
  * {@code MANIFEST.txt} ghi thời điểm, server, version và dung lượng từng file.
@@ -31,8 +34,21 @@ public class AuditExporter {
     public record SnapshotResult(File file, long bytes, int entries) {
     }
 
+    /** Các file nguồn cần đóng gói (một số có thể chưa tồn tại — bỏ qua kèm cảnh báo). */
+    public record ExportSources(
+            File auditLog,
+            File auditLogOld,
+            File redeemHistory,
+            File usedCodes,
+            File pendingRewards,
+            File items) {
+    }
+
     private static final DateTimeFormatter STAMP =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+
+    private record FileSpec(String name, File file) {
+    }
 
     private final Logger logger;
 
@@ -41,18 +57,15 @@ public class AuditExporter {
     }
 
     /**
-     * Tạo snapshot gzipped từ các file audit.
+     * Tạo snapshot gzipped từ toàn bộ trạng thái plugin.
      *
      * @param dataFolder    thư mục dữ liệu plugin (để tạo {@code exports/})
-     * @param auditLog      file {@code audit.log} (bắt buộc — có thể chưa tồn tại)
-     * @param auditLogOld   file {@code audit.log.1} đã quay vòng (nullable)
-     * @param historyFile   file {@code redeem-history.yml} (nullable)
+     * @param sources       các file nguồn (file chưa tồn tại được bỏ qua)
      * @param serverName    tên server (ghi vào manifest)
      * @param pluginVersion version plugin (ghi vào manifest)
      */
-    public SnapshotResult export(File dataFolder, File auditLog, File auditLogOld,
-                                 File historyFile, String serverName, String pluginVersion)
-            throws IOException {
+    public SnapshotResult export(File dataFolder, ExportSources sources,
+                                 String serverName, String pluginVersion) throws IOException {
         File exportsDir = new File(dataFolder, "exports");
         if (!exportsDir.exists() && !exportsDir.mkdirs()) {
             throw new IOException("Không tạo được thư mục exports/");
@@ -64,36 +77,26 @@ public class AuditExporter {
 
         int entries = 0;
         long nowSecs = System.currentTimeMillis() / 1000;
+        List<String> missing = new ArrayList<>();
         try {
             try (GZIPOutputStream gz = new GZIPOutputStream(
                     new BufferedOutputStream(new FileOutputStream(tmp)))) {
                 TarWriter tar = new TarWriter(gz);
                 ManifestBuilder manifest = new ManifestBuilder(serverName, pluginVersion, stamp);
 
-                // Ghi các entry dữ liệu TRƯỚC, rồi mới build + ghi MANIFEST (cần biết size từng file).
-                if (auditLog.exists()) {
-                    tar.writeEntry("audit.log", Files.readAllBytes(auditLog.toPath()),
-                            auditLog.lastModified() / 1000);
-                    manifest.addFile("audit.log", auditLog.length());
+                for (FileSpec spec : fileSpecs(sources)) {
+                    File file = spec.file();
+                    if (file == null || !file.exists()) {
+                        missing.add(spec.name());
+                        continue;
+                    }
+                    tar.writeEntry(spec.name(), Files.readAllBytes(file.toPath()),
+                            file.lastModified() / 1000);
+                    manifest.addFile(spec.name(), file.length());
                     entries++;
-                } else {
-                    logger.warning("Không tìm thấy audit.log — snapshot thiếu trail thô.");
-                }
-                if (auditLogOld != null && auditLogOld.exists()) {
-                    tar.writeEntry("audit-1.log", Files.readAllBytes(auditLogOld.toPath()),
-                            auditLogOld.lastModified() / 1000);
-                    manifest.addFile("audit-1.log", auditLogOld.length());
-                    entries++;
-                }
-                if (historyFile != null && historyFile.exists()) {
-                    tar.writeEntry("redeem-history.yml", Files.readAllBytes(historyFile.toPath()),
-                            historyFile.lastModified() / 1000);
-                    manifest.addFile("redeem-history.yml", historyFile.length());
-                    entries++;
-                } else {
-                    logger.warning("Không tìm thấy redeem-history.yml — snapshot thiếu lịch sử redeem.");
                 }
 
+                // MANIFEST viết sau cùng (cần biết size từng file).
                 tar.writeEntry("MANIFEST.txt",
                         manifest.build().getBytes(StandardCharsets.UTF_8), nowSecs);
                 entries++;
@@ -107,9 +110,24 @@ public class AuditExporter {
                 logger.warning("Không xoá được file tạm: " + tmp.getName());
             }
         }
-        logger.info("Đã xuất snapshot audit: " + target.getName()
+
+        if (!missing.isEmpty()) {
+            logger.warning("Snapshot thiếu " + missing.size() + " file (chưa tồn tại): "
+                    + String.join(", ", missing));
+        }
+        logger.info("Đã xuất snapshot: " + target.getName()
                 + " (" + target.length() + " bytes, " + entries + " entries)");
         return new SnapshotResult(target, target.length(), entries);
+    }
+
+    private static List<FileSpec> fileSpecs(ExportSources s) {
+        return List.of(
+                new FileSpec("audit.log", s.auditLog()),
+                new FileSpec("audit-1.log", s.auditLogOld()),
+                new FileSpec("redeem-history.yml", s.redeemHistory()),
+                new FileSpec("used-codes.yml", s.usedCodes()),
+                new FileSpec("pending-rewards.yml", s.pendingRewards()),
+                new FileSpec("items.yml", s.items()));
     }
 
     /** Dựng nội dung MANIFEST.txt trong archive. */
@@ -131,8 +149,8 @@ public class AuditExporter {
         }
 
         String build() {
-            return "BanhmiVN-CoreSync — audit snapshot\n"
-                    + "=================================\n"
+            return "BanhmiVN-CoreSync — full state snapshot\n"
+                    + "=======================================\n"
                     + "Export time (UTC): " + stamp + "\n"
                     + "Server:            " + serverName + "\n"
                     + "Plugin version:    " + pluginVersion + "\n"
@@ -140,8 +158,11 @@ public class AuditExporter {
                     + "Files (UTF-8 text):\n"
                     + sb
                     + "\n"
-                    + "audit.log lines: [ts] EVENT player=... code=... items=[...] detail\n"
-                    + "redeem-history.yml: player -> list of redeemed codes.\n";
+                    + "audit.log:          [ts] EVENT player=... code=... items=[...] detail\n"
+                    + "redeem-history.yml: player -> list of redeemed codes\n"
+                    + "used-codes.yml:     codes marked used locally (chống dùng lại)\n"
+                    + "pending-rewards.yml: rewards chưa trao được (tự trao lại khi vào server)\n"
+                    + "items.yml:          items đã bind (base64 ItemStack đầy đủ NBT/meta)\n";
         }
     }
 }
